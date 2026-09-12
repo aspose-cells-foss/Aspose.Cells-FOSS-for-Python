@@ -16,6 +16,7 @@ protection, and CSV/JSON/Markdown export.
 - [At a Glance](#at-a-glance)
 - [Key Capabilities](#key-capabilities)
 - [Installation](#installation)
+- [Dependencies](#dependencies)
 - [Quick Start](#quick-start)
 - [Additional Examples](#additional-examples)
 - [API Reference](#api-reference)
@@ -111,6 +112,24 @@ pip install aspose-cells-foss
 
 Requires Python 3.7 or later. Installs `pycryptodome` (>=3.15.0) and `olefile` (>=0.46) as
 dependencies.
+
+## Dependencies
+
+### Required Package Dependencies
+
+- `pycryptodome` >=3.15.0 — AES encryption/decryption used by `XLSXEncryptor`/`XLSXDecryptor`
+  for Agile-encrypted (ECMA-376 Part 2 §4) password-protected workbooks.
+- `olefile` >=0.46 — Compound File Binary (CFB) compatibility used by `CFBReader`/`CFBWriter`
+  when reading and writing encrypted `.xlsx` files.
+
+### Native and System Requirements
+
+- Requires Python 3.7 or later (`requires-python = ">=3.7"` in `pyproject.toml`).
+
+### Development Dependencies
+
+- `pytest` >=7.0.0 — test runner for the project's test suite.
+- `pytest-cov` >=4.0.0 — coverage reporting for the test suite.
 
 ## Quick Start
 
@@ -377,7 +396,7 @@ organized into one module.
   spreadsheet calculation engine.
 
 These limitations don't apply to
-[Aspose.Cells for Python — Enterprise Edition](https://products.aspose.com/cells/python-java/),
+[Aspose.Cells for Python — Enterprise Edition](https://products.aspose.com/cells/python-net/),
 which adds a full formula calculation engine, Standard encryption support, additional
 spreadsheet formats, and dedicated enterprise support.
 
