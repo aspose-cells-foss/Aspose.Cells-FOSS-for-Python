@@ -25,6 +25,7 @@ _CHART_ELEM_TYPE_MAP = {
     "areaChart": ChartType.AREA,
     "area3DChart": ChartType.AREA,
     "scatterChart": ChartType.SCATTER,
+    "bubbleChart": ChartType.SCATTER,
     "stockChart": ChartType.STOCK,
     "surface3DChart": ChartType.SURFACE,
     "surfaceChart": ChartType.SURFACE,
@@ -202,6 +203,20 @@ class ChartXmlLoader:
                 chart._upper_left_row_offset = self._get_anchor_int(anchor, 'xdr:from/xdr:rowOff', default=0)
                 chart._lower_right_column_offset = self._get_anchor_int(anchor, 'xdr:to/xdr:colOff', default=0)
                 chart._lower_right_row_offset = self._get_anchor_int(anchor, 'xdr:to/xdr:rowOff', default=0)
+                anchor_extent = anchor.find(
+                    'xdr:ext', namespaces=self._xdr_ns
+                )
+                if anchor_extent is not None:
+                    try:
+                        chart._anchor_extent_width = int(
+                            float(anchor_extent.get('cx'))
+                        )
+                        chart._anchor_extent_height = int(
+                            float(anchor_extent.get('cy'))
+                        )
+                    except (TypeError, ValueError):
+                        chart._anchor_extent_width = None
+                        chart._anchor_extent_height = None
                 chart._is_3d = is_3d
                 chart._source_chart_xml = chart_bytes
                 chart._source_chart_rels_xml = None
@@ -370,6 +385,15 @@ class ChartXmlLoader:
 
     def _load_single_chart_settings(self, chart, chart_root, plot_chart_elem, is_3d=False):
         """Loads settings for a simple single-type chart into the chart object."""
+        chart._is_bubble = plot_chart_elem.tag.endswith('}bubbleChart')
+        bubble_scale_elem = plot_chart_elem.find(
+            'c:bubbleScale', namespaces=self._c_ns
+        )
+        if bubble_scale_elem is not None:
+            try:
+                chart._bubble_scale = float(bubble_scale_elem.get('val', 100))
+            except (TypeError, ValueError):
+                chart._bubble_scale = 100.0
         grouping_elem = plot_chart_elem.find('c:grouping', namespaces=self._c_ns)
         if grouping_elem is not None and grouping_elem.get('val'):
             try:
@@ -540,6 +564,9 @@ class ChartXmlLoader:
         if chart_type == ChartType.SCATTER:
             x_values_formula = self._extract_formula(ser_elem, 'c:xVal')
             values_formula = self._extract_formula(ser_elem, 'c:yVal')
+            bubble_sizes = self._extract_numeric_source(
+                ser_elem, 'c:bubbleSize'
+            )
             if not values_formula:
                 return
             category_formula = None
@@ -549,6 +576,7 @@ class ChartXmlLoader:
                 return
             category_formula = self._extract_formula(ser_elem, 'c:cat')
             x_values_formula = None
+            bubble_sizes = None
 
         series_name = self._extract_series_name(ser_elem)
 
@@ -560,8 +588,15 @@ class ChartXmlLoader:
             x_values=x_values_formula,
             series_idx=series_idx,
             series_order=series_order,
+            bubble_sizes=bubble_sizes,
         )
         series = chart.n_series[-1]
+
+        bubble_3d = ser_elem.find('c:bubble3D', namespaces=self._c_ns)
+        if bubble_3d is not None:
+            series._bubble_3d = bubble_3d.get('val', '1') not in (
+                '0', 'false', 'False'
+            )
 
         # Per-series smooth (scatter/line: <c:smooth val="0/1"/>)
         smooth_elem = ser_elem.find('c:smooth', namespaces=self._c_ns)
@@ -774,6 +809,12 @@ class ChartXmlLoader:
         title_val = chart_root.find('.//cx:chart/cx:title//cx:v', namespaces=self._cx_ns)
         if title_val is not None:
             chart.title = title_val.text if title_val.text is not None else ""
+        else:
+            title_runs = chart_root.findall(
+                './/cx:chart/cx:title//a:t', namespaces=self._cx_ns
+            )
+            if title_runs:
+                chart.title = ''.join(run.text or '' for run in title_runs)
 
         legend_elem = chart_root.find('.//cx:chart/cx:legend', namespaces=self._cx_ns)
         if legend_elem is not None:
@@ -924,6 +965,23 @@ class ChartXmlLoader:
         if str_ref is not None and str_ref.text:
             return str_ref.text.strip()
         return None
+
+    def _extract_numeric_source(self, series_elem, prefix):
+        formula = self._extract_formula(series_elem, prefix)
+        if formula:
+            return formula
+        values = []
+        for point in series_elem.findall(
+            f'{prefix}/c:numLit/c:pt', namespaces=self._c_ns
+        ):
+            value = point.find('c:v', namespaces=self._c_ns)
+            if value is None or value.text is None:
+                continue
+            try:
+                values.append(float(value.text))
+            except ValueError:
+                values.append(0.0)
+        return tuple(values)
 
     def _extract_series_name(self, series_elem):
         text_val = series_elem.find('c:tx/c:v', namespaces=self._c_ns)

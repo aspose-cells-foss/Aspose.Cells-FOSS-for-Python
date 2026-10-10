@@ -311,6 +311,24 @@ class Shape:
         # Round-trip: raw xdr:sp XML string preserved from loaded file.
         # When set, the saver writes this XML verbatim inside the anchor element.
         self._source_xml = None
+        self._preset_geometry = _DRAWING_TYPE_TO_PRST.get(
+            drawing_type, "rect"
+        )
+        self._is_connector = False
+        self._shape_id = None
+        self._start_connection_id = None
+        self._start_connection_index = None
+        self._end_connection_id = None
+        self._end_connection_index = None
+        self._rotation = 0.0
+        self._flip_horizontal = False
+        self._flip_vertical = False
+        self._text_direction = None
+        self._tail_end = None
+        self._transform_x = None
+        self._transform_y = None
+        self._transform_width = None
+        self._transform_height = None
 
     # ---- anchor properties ----
 
@@ -401,6 +419,22 @@ class Shape:
         s.placement = self.placement
         s.hyperlink = self.hyperlink
         s._source_xml = self._source_xml
+        s._preset_geometry = self._preset_geometry
+        s._is_connector = self._is_connector
+        s._shape_id = self._shape_id
+        s._start_connection_id = self._start_connection_id
+        s._start_connection_index = self._start_connection_index
+        s._end_connection_id = self._end_connection_id
+        s._end_connection_index = self._end_connection_index
+        s._rotation = self._rotation
+        s._flip_horizontal = self._flip_horizontal
+        s._flip_vertical = self._flip_vertical
+        s._text_direction = self._text_direction
+        s._tail_end = self._tail_end
+        s._transform_x = self._transform_x
+        s._transform_y = self._transform_y
+        s._transform_width = self._transform_width
+        s._transform_height = self._transform_height
         return s
 
 

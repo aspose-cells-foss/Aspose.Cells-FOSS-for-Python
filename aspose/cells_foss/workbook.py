@@ -14,6 +14,7 @@ from enum import Enum, auto
 from .worksheet import Worksheet
 from .cell import Cell
 from .style import Style
+from .text_measure import FontStrategy, TextMeasurer
 from .xml_loader import XMLLoader
 from .xml_saver import XMLSaver
 from .workbook_properties import WorkbookProperties
@@ -23,6 +24,7 @@ from .xlsx_encryptor import XLSXEncryptor, XLSXDecryptor
 from .csv_handler import CSVHandler, CSVLoadOptions, CSVSaveOptions
 from .markdown_handler import MarkdownHandler, MarkdownSaveOptions
 from .json_handler import JsonHandler, JsonSaveOptions
+from .pdf_exporter import PdfExporter
 
 
 class SaveFormat(Enum):
@@ -35,6 +37,7 @@ class SaveFormat(Enum):
         >>> wb.save('output.xlsx', SaveFormat.XLSX)
         >>> wb.save('output.csv', SaveFormat.CSV)
         >>> wb.save('output.md', SaveFormat.MARKDOWN)
+        >>> wb.save('output.pdf', SaveFormat.PDF)
     """
     AUTO = auto()       # Auto-detect format from file extension
     XLSX = auto()       # Excel 2007+ format (.xlsx)
@@ -42,6 +45,7 @@ class SaveFormat(Enum):
     TSV = auto()        # Tab-separated values (.tsv)
     MARKDOWN = auto()   # Markdown format (.md)
     JSON = auto()       # JSON format (.json)
+    PDF = auto()        # Portable Document Format (.pdf)
 
     @classmethod
     def from_extension(cls, file_path):
@@ -66,6 +70,7 @@ class SaveFormat(Enum):
             '.md': cls.MARKDOWN,
             '.markdown': cls.MARKDOWN,
             '.json': cls.JSON,
+            '.pdf': cls.PDF,
         }
         if ext in format_map:
             return format_map[ext]
@@ -106,6 +111,9 @@ class Workbook:
         self._worksheets = []
         self._styles = []
         self._shared_strings = []
+        self._shared_string_runs = []
+        self._theme_colors = {}
+        self._table_styles = {}
         self._file_path = file_path
 
         # Workbook properties
@@ -126,6 +134,8 @@ class Workbook:
         # Initialize with default style
         default_style = Style()
         self._styles.append(default_style)
+        self._font_strategy = FontStrategy()
+        self._text_measurer = TextMeasurer(self._font_strategy)
 
         if file_path and os.path.exists(file_path):
             self._load(file_path, password)
@@ -188,6 +198,22 @@ class Workbook:
         if self._document_properties is None:
             self._document_properties = DocumentProperties()
         return self._document_properties
+
+    @property
+    def font_strategy(self):
+        """Shared font resolution strategy used by layout and rendering."""
+        return self._font_strategy
+
+    @property
+    def text_measurer(self):
+        """Shared text measurement service used by layout and rendering."""
+        return self._text_measurer
+
+    def set_font_fallbacks(self, *families):
+        """Sets workbook-wide fallback font families in priority order."""
+        if len(families) == 1 and isinstance(families[0], (list, tuple)):
+            families = tuple(families[0])
+        self._font_strategy.default_fallbacks = families
     
     # Worksheet management methods
     
@@ -381,7 +407,7 @@ class Workbook:
         Saves the workbook to a file.
 
         The file format is determined by the file extension or the explicit save_format parameter.
-        Supported formats: XLSX, CSV, TSV, Markdown.
+        Supported formats: XLSX, CSV, TSV, Markdown, JSON, PDF.
 
         Args:
             file_path (str): Path where the file should be saved.
@@ -403,6 +429,7 @@ class Workbook:
                 wb.save('output.csv')   # CSV format
                 wb.save('output.tsv')   # TSV format
                 wb.save('output.md')    # Markdown format
+                wb.save('output.pdf')   # PDF format
 
             Explicit format specification::
 
@@ -442,6 +469,8 @@ class Workbook:
             self.save_as_markdown(file_path, options)
         elif save_format == SaveFormat.JSON:
             self.save_as_json(file_path, options)
+        elif save_format == SaveFormat.PDF:
+            self.save_as_pdf(file_path, options)
         else:
             raise ValueError(f"Unsupported save format: {save_format}")
 
@@ -590,6 +619,10 @@ class Workbook:
             >>> wb.save_as_json('sheet1.json', options)
         """
         JsonHandler.save_json(self, file_path, options)
+
+    def save_as_pdf(self, file_path, options=None):
+        """Save visible worksheets to PDF using prepared page layouts."""
+        PdfExporter.save(self, file_path, options)
 
     # String representation
 

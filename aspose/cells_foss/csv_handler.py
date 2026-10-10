@@ -17,13 +17,12 @@ Features:
 import csv
 import io
 import locale
-import re
-from datetime import datetime, date, time
-from decimal import Decimal, ROUND_HALF_UP
 import platform
+from datetime import datetime
 
 _is_windows = platform.system() == 'Windows'
 from typing import Optional, List, Any
+from .value_formatter import ValueFormatter, DisplayValueOptions
 
 
 def _system_encoding() -> str:
@@ -473,27 +472,13 @@ class CSVHandler:
         Returns:
             str: The formatted string value.
         """
-        if cell is None:
-            return ''
-
-        number_format = None
-        if hasattr(cell, 'style') and hasattr(cell.style, 'number_format'):
-            number_format = cell.style.number_format
-
-        # Get the cell value
-        value = cell.value
-
-        # If value is None but cell has a formula, try to evaluate it
-        if value is None and hasattr(cell, 'formula') and cell.formula is not None:
-            if workbook is not None:
-                try:
-                    from .formula_evaluator import FormulaEvaluator
-                    evaluator = FormulaEvaluator(workbook)
-                    value = evaluator.evaluate(cell.formula, worksheet)
-                except Exception:
-                    pass  # If evaluation fails, value remains None
-
-        return CSVHandler._format_value_for_csv(value, options, number_format)
+        display_options = DisplayValueOptions.from_csv_options(options)
+        return ValueFormatter.format_cell(
+            cell,
+            workbook=workbook,
+            worksheet=worksheet,
+            options=display_options,
+        )
 
     @staticmethod
     def _format_value_for_csv(value: Any, options: CSVSaveOptions, number_format: Optional[str] = None) -> str:
@@ -508,36 +493,8 @@ class CSVHandler:
         Returns:
             str: The formatted string value.
         """
-        if value is None:
-            return ''
-
-        # Handle datetime types
-        if isinstance(value, datetime):
-            return value.strftime(options.datetime_format)
-
-        if isinstance(value, date):
-            return value.strftime(options.date_format)
-
-        if isinstance(value, time):
-            return value.strftime(options.time_format)
-
-        # Handle boolean
-        if isinstance(value, bool):
-            return 'TRUE' if value else 'FALSE'
-
-        # Handle numeric types
-        if isinstance(value, (int, float)):
-            formatted_number = CSVHandler._format_number_with_format(value, number_format)
-            if formatted_number is not None:
-                return formatted_number
-            # Check if it's an integer stored as float
-            if isinstance(value, float) and value.is_integer():
-                return str(int(value))
-            # Format float to match Excel's display precision (avoids artifacts like 1.1000000000000001)
-            return CSVHandler._format_float_like_excel(value)
-
-        # Handle strings
-        return str(value)
+        display_options = DisplayValueOptions.from_csv_options(options)
+        return ValueFormatter.format_value(value, number_format=number_format, options=display_options)
 
     @staticmethod
     def _format_float_like_excel(value: float) -> str:
@@ -553,16 +510,7 @@ class CSVHandler:
         Returns:
             str: The formatted float string.
         """
-        # Excel's "General" format displays up to 10 significant digits in CSV export.
-        # Using 10 significant digits matches Excel's CSV output behaviour.
-        formatted = f'{value:.10g}'
-
-        # Handle edge case where very small numbers might show as scientific notation
-        # Excel shows these as 0 in CSV
-        if 'e' in formatted.lower() and abs(value) < 1e-10:
-            return '0'
-
-        return formatted
+        return ValueFormatter._format_float_like_excel(value)
 
     @staticmethod
     def _format_number_with_format(value: float, format_code: Optional[str]) -> Optional[str]:
@@ -576,93 +524,7 @@ class CSVHandler:
         Returns:
             str or None: Formatted value if a usable format is provided, otherwise None.
         """
-        if format_code is None:
-            return None
-
-        if format_code == '' or format_code.lower() == 'general' or format_code == '@':
-            return None
-
-        sections = format_code.split(';')
-        section = sections[0] if sections else format_code
-        value_to_format = value
-
-        if len(sections) > 1:
-            if value < 0:
-                section = sections[1]
-                value_to_format = abs(value)
-            elif value == 0 and len(sections) > 2:
-                section = sections[2]
-            else:
-                section = sections[0]
-
-        # Strip bracketed tokens like [Red], [>100], [$-409]
-        section = re.sub(r'\[[^\]]+\]', '', section)
-
-        # Check if this is a date/time format before checking for number placeholders
-        if CSVHandler._is_date_format(section):
-            return CSVHandler._format_date_with_excel_format(value, section)
-
-        # If no placeholders, return literal section
-        if not re.search(r'[0#?]', section):
-            return CSVHandler._clean_format_literal(section)
-
-        first_idx = None
-        last_idx = None
-        for idx, ch in enumerate(section):
-            if ch in '0#?':
-                if first_idx is None:
-                    first_idx = idx
-                last_idx = idx
-
-        if first_idx is None:
-            return CSVHandler._clean_format_literal(section)
-
-        prefix_raw = section[:first_idx]
-        suffix_raw = section[last_idx + 1:]
-        prefix = CSVHandler._clean_format_literal(prefix_raw)
-        suffix = CSVHandler._clean_format_literal(suffix_raw)
-
-        has_percent = '%' in section
-        if has_percent:
-            value_to_format *= 100
-
-        # Scientific notation
-        if 'E' in section or 'e' in section:
-            decimals = 0
-            match = re.search(r'\.(?P<frac>[0#?]+)[eE]', section)
-            if match:
-                decimals = len(match.group('frac'))
-            formatted = f"{value_to_format:.{decimals}E}"
-            return f"{prefix}{formatted}{suffix}"
-
-        # Standard number format
-        number_pattern = section[first_idx:last_idx + 1]
-        pattern_clean = re.sub(r'[^0#.,]', '', number_pattern)
-        if '.' in pattern_clean:
-            int_part, frac_part = pattern_clean.split('.', 1)
-        else:
-            int_part, frac_part = pattern_clean, ''
-
-        use_grouping = ',' in int_part
-        min_decimals = frac_part.count('0')
-        max_decimals = sum(1 for ch in frac_part if ch in '0#')
-
-        if max_decimals == 0:
-            rounded = int(Decimal(str(value_to_format)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
-            formatted = f'{rounded:,}' if use_grouping else str(rounded)
-        else:
-            quant = Decimal('0.' + '0' * max_decimals)
-            rounded_d = Decimal(str(value_to_format)).quantize(quant, rounding=ROUND_HALF_UP)
-            rounded_f = float(rounded_d)
-            formatted = f'{rounded_f:,.{max_decimals}f}' if use_grouping else f'{rounded_f:.{max_decimals}f}'
-            if max_decimals > min_decimals and '.' in formatted:
-                int_text, frac_text = formatted.split('.', 1)
-                frac_text = frac_text.rstrip('0')
-                if len(frac_text) < min_decimals:
-                    frac_text = frac_text.ljust(min_decimals, '0')
-                formatted = int_text if frac_text == '' else f"{int_text}.{frac_text}"
-
-        return f"{prefix}{formatted}{suffix}"
+        return ValueFormatter._format_number_with_format(value, format_code)
 
     @staticmethod
     def _clean_format_literal(text: str) -> str:
@@ -675,37 +537,7 @@ class CSVHandler:
         Returns:
             str: Cleaned literal text.
         """
-        result = []
-        idx = 0
-        while idx < len(text):
-            ch = text[idx]
-            if ch == '"':
-                idx += 1
-                while idx < len(text) and text[idx] != '"':
-                    result.append(text[idx])
-                    idx += 1
-                idx += 1
-                continue
-            if ch == '_':
-                # Underscore means "add a space the width of the following character"
-                # In CSV output, we represent this as a single space
-                result.append(' ')
-                idx += 2
-                continue
-            if ch == '*':
-                # Asterisk means "repeat the following character to fill" - skip in CSV
-                idx += 2
-                continue
-            if ch == '\\':
-                if idx + 1 < len(text):
-                    result.append(text[idx + 1])
-                    idx += 2
-                else:
-                    idx += 1
-                continue
-            result.append(ch)
-            idx += 1
-        return ''.join(result)
+        return ValueFormatter._clean_format_literal(text)
 
     @staticmethod
     def _is_date_format(format_code: str) -> bool:
@@ -718,29 +550,7 @@ class CSVHandler:
         Returns:
             bool: True if the format code is a date/time format, False otherwise.
         """
-        if not format_code:
-            return False
-
-        # Common date/time format characters in Excel
-        # y, m, d for date; h, s for time; AM/PM for 12-hour format
-        # Note: 'm' can be month or minute depending on context
-        date_chars = set('yYdDhHsS')
-        format_lower = format_code.lower()
-
-        # Check for date-specific patterns
-        if any(c in format_code for c in date_chars):
-            return True
-
-        # Check for month patterns (m or mm not adjacent to h or s means month)
-        # If 'm' appears and there's also 'y' or 'd', it's definitely a date
-        if 'm' in format_lower:
-            if 'y' in format_lower or 'd' in format_lower:
-                return True
-            # If 'm' appears without 'h' or 's', it's likely a date (standalone month)
-            if 'h' not in format_lower and 's' not in format_lower:
-                return True
-
-        return False
+        return ValueFormatter._is_date_format(format_code)
 
     @staticmethod
     def _format_date_with_excel_format(serial_date: float, format_code: str) -> str:
@@ -754,29 +564,7 @@ class CSVHandler:
         Returns:
             str: The formatted date string.
         """
-        # Convert Excel serial date to Python datetime
-        # Excel base date is December 30, 1899 (to account for the 1900 leap year bug)
-        excel_epoch = datetime(1899, 12, 30)
-
-        try:
-            days = int(serial_date)
-            fraction = serial_date - days
-            seconds = int(round(fraction * 86400))
-
-            from datetime import timedelta
-            dt = excel_epoch + timedelta(days=days, seconds=seconds)
-        except (ValueError, OverflowError):
-            # If conversion fails, return the raw number
-            return str(serial_date)
-
-        # Convert Excel format code to Python strftime format
-        python_format = CSVHandler._excel_date_format_to_python(format_code)
-
-        try:
-            return dt.strftime(python_format)
-        except ValueError:
-            # If formatting fails, return ISO format
-            return dt.strftime('%Y-%m-%d')
+        return ValueFormatter._format_date_with_excel_format(serial_date, format_code)
 
     @staticmethod
     def _excel_date_format_to_python(excel_format: str) -> str:
@@ -789,127 +577,7 @@ class CSVHandler:
         Returns:
             str: The equivalent Python strftime format string.
         """
-        result = []
-        i = 0
-        fmt = excel_format
-
-        while i < len(fmt):
-            ch = fmt[i]
-            ch_lower = ch.lower()
-
-            # Year patterns
-            if ch_lower == 'y':
-                count = 1
-                while i + count < len(fmt) and fmt[i + count].lower() == 'y':
-                    count += 1
-                if count >= 4:
-                    result.append('%Y')  # 4-digit year
-                else:
-                    result.append('%y')  # 2-digit year
-                i += count
-                continue
-
-            # Month patterns (m or mm when not after h)
-            if ch_lower == 'm':
-                count = 1
-                while i + count < len(fmt) and fmt[i + count].lower() == 'm':
-                    count += 1
-
-                # Determine if this is month or minute based on context
-                # Look backward for 'h' - if found, this is minutes
-                is_minute = False
-                for j in range(i - 1, -1, -1):
-                    if fmt[j].lower() == 'h':
-                        is_minute = True
-                        break
-                    if fmt[j].lower() in 'yds':
-                        break
-
-                if is_minute:
-                    result.append('%M')  # Minutes (always 2-digit)
-                elif count >= 4:
-                    result.append('%B')  # Full month name
-                elif count == 3:
-                    result.append('%b')  # Abbreviated month name
-                elif count == 2:
-                    result.append('%m')  # 2-digit month
-                else:
-                    result.append('%#m' if _is_windows else '%-m')  # 1 or 2-digit month
-                i += count
-                continue
-
-            # Day patterns
-            if ch_lower == 'd':
-                count = 1
-                while i + count < len(fmt) and fmt[i + count].lower() == 'd':
-                    count += 1
-                if count >= 4:
-                    result.append('%A')  # Full weekday name
-                elif count == 3:
-                    result.append('%a')  # Abbreviated weekday name
-                elif count == 2:
-                    result.append('%d')  # 2-digit day
-                else:
-                    result.append('%#d' if _is_windows else '%-d')  # 1 or 2-digit day
-                i += count
-                continue
-
-            # Hour patterns
-            if ch_lower == 'h':
-                count = 1
-                while i + count < len(fmt) and fmt[i + count].lower() == 'h':
-                    count += 1
-                # Check if AM/PM is present in format for 12-hour vs 24-hour
-                if 'am' in fmt.lower() or 'pm' in fmt.lower():
-                    result.append('%I')  # 12-hour format
-                else:
-                    result.append('%H')  # 24-hour format
-                i += count
-                continue
-
-            # Second patterns
-            if ch_lower == 's':
-                count = 1
-                while i + count < len(fmt) and fmt[i + count].lower() == 's':
-                    count += 1
-                result.append('%S')
-                i += count
-                continue
-
-            # AM/PM patterns
-            if ch_lower == 'a' and i + 1 < len(fmt) and fmt[i + 1].lower() == 'm':
-                # Check for AM/PM or A/P
-                if i + 3 < len(fmt) and fmt[i:i+4].lower() == 'am/p' and fmt[i+4].lower() == 'm':
-                    result.append('%p')
-                    i += 5
-                elif i + 1 < len(fmt) and fmt[i:i+2].lower() == 'am':
-                    result.append('%p')
-                    i += 2
-                else:
-                    result.append(ch)
-                    i += 1
-                continue
-
-            # Skip escaped characters
-            if ch == '\\' and i + 1 < len(fmt):
-                result.append(fmt[i + 1])
-                i += 2
-                continue
-
-            # Skip quoted strings
-            if ch == '"':
-                i += 1
-                while i < len(fmt) and fmt[i] != '"':
-                    result.append(fmt[i])
-                    i += 1
-                i += 1  # Skip closing quote
-                continue
-
-            # Pass through other characters (like /, -, :, space)
-            result.append(ch)
-            i += 1
-
-        return ''.join(result)
+        return ValueFormatter._excel_date_format_to_python(excel_format)
 
     @staticmethod
     def _parse_value(value_str: str, options: CSVLoadOptions) -> Any:

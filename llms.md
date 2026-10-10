@@ -1,278 +1,311 @@
-# Aspose.Cells FOSS - Complete Reference
+# Aspose.Cells FOSS for Python — LLM Context
 
-**Aspose.Cells-FOSS-for-Python** is a pure-Python library for creating, reading, and modifying Excel `.xlsx` files without Microsoft Excel. Its public API mirrors [Aspose.Cells for .NET](https://reference.aspose.com/cells/net/), making it straightforward to port .NET code to Python.
+Aspose.Cells FOSS for Python is a pure-Python library for creating, loading, editing, and
+exporting Excel `.xlsx` workbooks without Microsoft Excel. The current package version is
+`26.10.0`, and the import namespace is `aspose.cells_foss`.
+
+This document is a high-confidence usage guide, not an exhaustive API reference. When it
+conflicts with the repository, use the following sources in order:
+
+1. `aspose/cells_foss/` for behavior
+2. `aspose/cells_foss/__init__.py::__all__` for supported top-level imports
+3. `examples/` for executable public workflows
+4. `README.md` for installation and scope
 
 ## Installation
 
-- Install via `pip install aspose-cells-foss`
-- Import as `from aspose.cells_foss import Workbook`
-- Requires Python 3.7+; runtime dependencies are `pycryptodome` and `olefile`
+```bash
+pip install aspose-cells-foss
+```
 
-## Core Usage
+Python 3.7 or later is required. Core package metadata declares `pycryptodome>=3.15.0` and
+`olefile>=0.46`.
+
+PDF rendering additionally requires `skia-python`:
+
+```bash
+# Python 3.8+
+pip install "skia-python>=144.0.post2,<145"
+
+# Python 3.7
+pip install "skia-python==87.4"
+```
+
+## Rules for Generated Code
+
+- Use A1 strings for direct cell access: `worksheet.cells["A1"]`.
+- Do not generate tuple keys such as `worksheet.cells[0, 0]`.
+- Prefer snake_case methods. Some classes provide PascalCase compatibility aliases, but this is
+  not universal; never invent an alias.
+- Use names exported from `aspose.cells_foss.__all__` for top-level imports. Loader, saver, CFB,
+  and renderer implementation classes are internal unless explicitly exported there.
+- Worksheet indexes and row/column coordinate APIs are generally zero-based. A1 references are
+  the preferred user-facing form.
+- Preserve formulas as strings beginning with `=`.
+- Use `SaveFormat` or a supported filename extension to select an output format.
+- Do not claim support for `.xls`, `.ods`, or `.xlsb`.
+- The library preserves many unmodified Open XML parts for round-trip fidelity. Do not advise
+  users to rebuild unchanged workbook XML.
+
+## Core Workbook Usage
 
 ```python
 from aspose.cells_foss import Workbook
 
-wb = Workbook()                      # new workbook
-wb = Workbook("input.xlsx")          # open existing file
-wb = Workbook("protected.xlsx", password="secret")  # open encrypted file
+workbook = Workbook()
+worksheet = workbook.worksheets[0]
 
-ws = wb.worksheets[0]                # first worksheet (0-based)
-ws = wb.worksheets.add("Sheet2")     # add a named worksheet
+worksheet.cells["A1"].value = "Revenue"
+worksheet.cells["B1"].value = 1250.50
+worksheet.cells["B2"].formula = "=SUM(B1:B1)"
 
-ws.cells["A1"].put_value("Hello")    # write by A1 reference
-ws.cells["A1"].value                 # read value
-ws.cells["A2"].formula = "=SUM(B1:B5)"
-
-wb.save("output.xlsx")               # save as XLSX
-wb.save("output.csv")                # auto-detects format from extension
-wb.save("output.xlsx", password="secret")  # save with AES encryption
+workbook.save("output.xlsx")
 ```
 
-## Naming Conventions
-
-Every public method has **two names**: a snake_case primary form and a PascalCase alias for .NET-style compatibility.
+Load an existing or encrypted workbook:
 
 ```python
-ws.horizontal_page_breaks.add(19)   # Python style
-ws.horizontal_page_breaks.Add(19)   # .NET / Aspose style — identical behaviour
+from aspose.cells_foss import Workbook
+
+workbook = Workbook("input.xlsx")
+protected = Workbook("protected.xlsx", password="secret")
 ```
 
-## Color Strings
-
-Colors are always **6-digit RRGGBB hex strings without a `#` prefix**.
+Workbook worksheet management uses methods on `Workbook`, not `workbook.worksheets.add()`:
 
 ```python
-style.font.color = "FF0000"    # red — correct
-style.font.color = "#FF0000"   # wrong — breaks XML serialisation
+worksheet = workbook.add_worksheet("Data")
+same_sheet = workbook.get_worksheet("Data")
+copy = workbook.copy_worksheet("Data")
+workbook.set_active_worksheet("Data")
+workbook.remove_worksheet(copy.name)
 ```
 
-## Cell Coordinates
+## Cells and Styles
 
-Row and column indices are **0-based** everywhere in the API.
-A1-style string references (`"A1"`, `"B3"`) are also accepted at the cell-access boundary.
-
-## Styling
+Assign through `Cell.value`; `Cell.put_value()` also exists, but property assignment is preferred.
 
 ```python
-cell = ws.cells["A1"]
+cell = worksheet.cells["A1"]
+cell.value = "Quarterly Report"
+
 style = cell.get_style()
-style.font.is_bold = True
+style.font.bold = True
 style.font.size = 14
-style.font.color = "FF0000"
-style.horizontal_alignment = "center"
-style.number_format = "#,##0.00"
-style.borders["bottom"].line_style = "thin"
+style.font.color = "#FF0000"
+style.alignment.horizontal = "center"
 cell.apply_style(style)
 ```
 
-## Save Formats
+Do not generate `font.is_bold`; the implemented property is `font.bold`. Cell-style color values
+accept normalized hexadecimal strings used by the examples, including `#RRGGBB`.
 
-`SaveFormat` enum controls the output format when the extension is ambiguous:
-
-- `SaveFormat.XLSX` — Excel 2007+ (default)
-- `SaveFormat.CSV` — comma-separated values
-- `SaveFormat.TSV` — tab-separated values
-- `SaveFormat.MARKDOWN` — Markdown table
-- `SaveFormat.JSON` — JSON array
+Merge cells with an A1 range when possible:
 
 ```python
-from aspose.cells_foss import Workbook, SaveFormat
-wb.save("out.csv", SaveFormat.CSV)
+worksheet.cells.merge_range("A1:C1")
+worksheet.cells.unmerge_range("A1:C1")
 ```
 
-## Charts
-
-16 chart types supported. Access via `worksheet.charts`.
+Comments use `set_comment`, not `add_comment`:
 
 ```python
-from aspose.cells_foss import Workbook, ChartType
-
-ws = wb.worksheets[0]
-chart = ws.charts.add_line(upper_left_row=0, upper_left_col=4,
-                            lower_right_row=20, lower_right_col=12)
-chart.title = "Monthly Sales"
-chart.n_series.add("B2:B7", category_data="A2:A7", name="Sales")
-
-# Other add methods: add_bar, add_pie, add_area, add_scatter,
-# add_waterfall, add_combo, add_stock, add_surface, add_radar,
-# add_treemap, add_sunburst, add_histogram, add_funnel,
-# add_box_whisker, add_map
+worksheet.cells["A1"].set_comment("Review this value", author="Analyst")
 ```
 
-## Pictures
+## Common Worksheet Features
 
-Embed images anchored between two cells.
-
-```python
-ws.pictures.add("logo.png",
-    upper_left_row=1, upper_left_column=1,
-    lower_right_row=8, lower_right_column=5)
-
-pic = ws.pictures[0]
-pic.hyperlink_url = "https://example.com"  # optional click hyperlink
-```
-
-## Drawing Shapes
-
-30+ preset shapes via `MsoDrawingType` enum.
-
-```python
-from aspose.cells_foss import MsoDrawingType, FillType, TextAlignmentType, TextAnchorType
-
-shape = ws.shapes.add(MsoDrawingType.ROUNDED_RECTANGLE, 1, 1, 5, 5)
-shape.text = "Hello"
-shape.fill.fore_color = "90EE90"
-shape.font.bold = True
-shape.text_horizontal_alignment = TextAlignmentType.CENTER
-shape.text_vertical_alignment = TextAnchorType.MIDDLE
-
-textbox = ws.shapes.add_text_box(7, 1, 11, 8)
-textbox.text = "Notes"
-```
-
-Available shape types include: `RECTANGLE`, `ROUNDED_RECTANGLE`, `OVAL`, `DIAMOND`, `TRIANGLE`, `RIGHT_TRIANGLE`, `PARALLELOGRAM`, `TRAPEZOID`, `HEXAGON`, `OCTAGON`, `CROSS`, `STAR_4/5/6/7/8`, `RIGHT_ARROW`, `LEFT_ARROW`, `UP_ARROW`, `DOWN_ARROW`, `TEXT_BOX`, `CALLOUT`, `PENTAGON`, `CLOUD`, `HEART`, `LIGHTNING_BOLT`, `SMILEY_FACE`, `LEFT_RIGHT_ARROW`, `UP_DOWN_ARROW`, `CUBE`, `BEVEL`.
-
-## Sparklines
-
-Mini-charts embedded inside cells. Three types: `LINE`, `COLUMN`, `WIN_LOSS`.
-
-```python
-from aspose.cells_foss import SparklineType
-
-group = ws.sparkline_groups.add(
-    sparkline_type=SparklineType.LINE,
-    data_range="Sheet1!B2:F6",   # source data
-    is_vertical=False,
-    location_range="G2:G6"       # cells where sparklines appear
-)
-group.color_series = "0070C0"
-group.show_high_point = True
-group.color_high = "00B050"
-group.color_low = "FF0000"
-```
-
-## Excel Tables (ListObject)
-
-Structured tables with auto-filter and named columns.
-
-```python
-table = ws.tables.add(start_row=0, start_col=0,
-                       end_row=9, end_col=3,
-                       has_headers=True, name="SalesTable")
-table.table_style_info.name = "TableStyleMedium9"
-table.table_style_info.show_row_stripes = True
-
-# Alternative: create from A1-range string
-table = ws.tables.add_with_range("A1:D10", name="SalesTable")
-```
-
-## Data Validation
+### Data validation
 
 ```python
 from aspose.cells_foss import DataValidationType
 
-v = ws.data_validations.add("A1:A10")
-v.type = DataValidationType.LIST
-v.formula1 = '"Option1,Option2,Option3"'
+validation = worksheet.data_validations.add("A1:A10")
+validation.type = DataValidationType.LIST
+validation.formula1 = '"Yes,No"'
 ```
 
-## Conditional Formatting
+### Hyperlinks
 
 ```python
-cf = ws.conditional_formatting.add("A1:C10")
-rule = cf.add_rule()
-rule.type = "cellValue"
-rule.operator = "greaterThan"
-rule.formula1 = "100"
-rule.style.font.color = "FF0000"
+worksheet.hyperlinks.add("A1", "https://example.com")
+worksheet.hyperlinks.add("A2", sub_address="Sheet2!B5")
 ```
 
-## Hyperlinks
+### Auto-filter and print area
 
 ```python
-ws.hyperlinks.add("A1", "https://example.com")         # URL
-ws.hyperlinks.add("A2", "mailto:info@example.com")     # email
-ws.hyperlinks.add("A3", "Sheet2!B5")                   # internal ref
+worksheet.auto_filter.range = "A1:E20"
+worksheet.print_area = "A1:H40"
 ```
 
-## Comments
+### Page breaks
 
 ```python
-comment = ws.cells["A1"].add_comment("Author", "This is a note.")
+worksheet.horizontal_page_breaks.add(19)
+worksheet.vertical_page_breaks.add(3)
 ```
 
-## Manual Page Breaks
+These integer APIs use zero-based row and column indexes.
+
+### Protection and encryption
+
+Workbook or worksheet protection controls edit permissions; file encryption protects the package
+with a password. They are separate features.
 
 ```python
-ws.horizontal_page_breaks.add(19)   # break before row 20 (0-based)
-ws.vertical_page_breaks.add(3)      # break before column D (0-based)
-ws.horizontal_page_breaks.remove(19)
-ws.horizontal_page_breaks.clear()
+workbook.protect(password="structure-password")
+worksheet.protect(password="sheet-password")
+
+workbook.save("encrypted.xlsx", password="file-password")
+loaded = Workbook("encrypted.xlsx", password="file-password")
 ```
 
-## Merge Cells
+### Document properties
 
 ```python
-ws.cells.merge(0, 0, 1, 3)          # merge 1 row × 3 cols from A1
-ws.cells.unmerge(0, 0, 1, 3)
+workbook.document_properties.core.title = "Quarterly Report"
+workbook.document_properties.core.creator = "Finance Team"
+workbook.document_properties.core.subject = "Q4 Results"
 ```
 
-## Print Area
+## Charts, Pictures, Shapes, Tables, and Sparklines
+
+Feature collections are exposed on each worksheet:
+
+- `worksheet.charts`
+- `worksheet.pictures`
+- `worksheet.shapes`
+- `worksheet.tables`
+- `worksheet.sparkline_groups`
+- `worksheet.conditional_formats`
+- `worksheet.data_validations`
+- `worksheet.hyperlinks`
+
+Example chart creation:
 
 ```python
-ws.page_setup.print_area = "A1:H40"
+chart = worksheet.charts.add_line(0, 4, 20, 12)
+chart.title = "Monthly Sales"
+chart.n_series.add("B2:B7", category_data="A2:A7", name="Sales")
 ```
 
-## Auto-Filter
+Example table creation:
 
 ```python
-ws.auto_filter.range = "A1:E1"
+table = worksheet.tables.add(
+    start_row=0,
+    start_col=0,
+    end_row=9,
+    end_col=3,
+    has_headers=True,
+    name="SalesTable",
+)
+table.table_style_info.name = "TableStyleMedium9"
+table.table_style_info.show_row_stripes = True
 ```
 
-## Workbook & Worksheet Protection
+Example sparkline creation:
 
 ```python
-wb.settings.protect(password="pw")                  # protect workbook structure
-ws.protect(password="pw")                           # protect worksheet cells
-ws.unprotect(password="pw")
+from aspose.cells_foss import SparklineType
+
+group = worksheet.sparkline_groups.add(
+    sparkline_type=SparklineType.LINE,
+    data_range="Sheet1!B2:F6",
+    is_vertical=False,
+    location_range="G2:G6",
+)
 ```
 
-## Encryption
+Consult the matching `examples/test_<feature>.py` before generating advanced chart, conditional
+formatting, shape, picture, table, or sparkline code. These APIs have feature-specific arguments
+that should not be guessed.
+
+## Load and Save Formats
+
+`Workbook.save()` infers the format from the extension or accepts an explicit `SaveFormat`:
 
 ```python
-wb.save("secure.xlsx", password="mypassword")       # encrypt on save
-wb2 = Workbook("secure.xlsx", password="mypassword") # decrypt on open
+from aspose.cells_foss import SaveFormat
+
+workbook.save("output.xlsx")
+workbook.save("output.csv")
+workbook.save("output.tsv")
+workbook.save("output.json")
+workbook.save("output.md")
+workbook.save("output.pdf")  # Requires skia-python
+workbook.save("data.txt", SaveFormat.CSV)
 ```
 
-## Document Properties
+Supported directions:
+
+| Format | Load | Save |
+|---|:---:|:---:|
+| XLSX | Yes | Yes |
+| Encrypted XLSX | Yes | Yes |
+| CSV | Yes | Yes |
+| TSV | No | Yes |
+| JSON | No | Yes |
+| Markdown | No | Yes |
+| PDF | No | Yes |
+
+CSV import is explicit:
 
 ```python
-wb.document_properties.title = "My Report"
-wb.document_properties.author = "Jane Smith"
-wb.document_properties.subject = "Q4 Results"
+from aspose.cells_foss import Workbook, load_csv_workbook
+
+workbook = load_csv_workbook("input.csv")
+
+another = Workbook()
+another.load_csv("input.csv")
 ```
 
-## Formula Evaluator
+PDF options are available through `PdfSaveOptions`:
 
-A lightweight evaluator handles basic formulas at read time for cells without cached values. Supported functions: `CONCATENATE`, `CONCAT`, `TEXT`, `IF`, `AND`, `OR`, `NOT`, `LEN`, `TRIM`, `UPPER`, `LOWER`. Cell references and defined names are also resolved.
+```python
+from aspose.cells_foss import PdfSaveOptions
 
-## Key Classes
+options = PdfSaveOptions()
+options.worksheet_indices = [0]
+options.export_hidden_worksheets = False
+workbook.save_as_pdf("output.pdf", options)
+```
 
-| Class | Description |
-|---|---|
-| `Workbook` | Root object; manages worksheets, properties, and I/O |
-| `Worksheet` | One sheet; exposes `cells`, `charts`, `pictures`, `shapes`, `sparkline_groups`, `tables`, `page_setup`, etc. |
-| `Cell` | Single cell; `value`, `formula`, `get_style()`, `set_style()` |
-| `Cells` | Cell collection with A1 and (row, col) access |
-| `Style` | Cell formatting: font, fill, borders, number format, alignment |
-| `Chart` | Chart object with `n_series`, `title`, `legend_position`, axes |
-| `Picture` | Embedded image with anchor coordinates and optional hyperlink |
-| `Shape` | Drawing shape with fill, line, text, and font formatting |
-| `SparklineGroup` | Group of sparklines sharing a visual style |
-| `Table` | Structured table with columns, style, and optional totals row |
-| `SaveFormat` | Enum for controlling output format (XLSX, CSV, TSV, MARKDOWN, JSON) |
-| `DataValidationType` | Enum: `LIST`, `WHOLE`, `DECIMAL`, `DATE`, `TEXT_LENGTH`, `CUSTOM` |
-| `ChartType` | Enum: `LINE`, `BAR`, `PIE`, `AREA`, `SCATTER`, `WATERFALL`, … |
-| `MsoDrawingType` | Enum of 30+ preset shape geometries |
-| `SparklineType` | Enum: `LINE`, `COLUMN`, `WIN_LOSS` |
+## Public API Groups
+
+The top-level package exports these main groups:
+
+- Core: `Workbook`, `SaveFormat`, `Worksheet`, `Cell`, `Cells`
+- Styling and text: `Style`, `Font`, `NumberFormat`, `StyleResolver`, `ValueFormatter`,
+  `RichTextRun`, text measurement types
+- Encryption: encryption parameters, algorithms, `encrypt_xlsx`, `decrypt_xlsx`
+- Data validation and text exports: validation enums and collections, CSV/JSON/Markdown handlers
+  and options
+- PDF: `PdfSaveOptions`, layout models, `PdfLayoutEngine`, `PdfExporter`, `SkiaPdfRenderer`
+- Drawings and charts: chart, picture, and shape models and enums
+- Tables and sparklines: table and sparkline models, collections, and enums
+
+Always inspect `aspose/cells_foss/__init__.py` before asserting that a symbol supports a top-level
+import.
+
+## Limitations
+
+- This is not a full Excel calculation engine. Formula strings and cached values round-trip, and
+  a limited internal evaluator covers some expressions.
+- Native workbook I/O targets `.xlsx`; legacy binary and OpenDocument spreadsheet formats are not
+  supported.
+- Some advanced Open XML content is preserved without an editable object model.
+- PDF appearance depends on installed fonts and `skia-python`.
+
+## Development and Verification
+
+Use the repository examples as tests:
+
+```bash
+python -m pytest examples/test_<feature>.py -v
+python -m pytest examples --collect-only -q -p no:cacheprovider
+```
+
+Examples should write generated files through `examples.output_path_helper.examples_output_path()`.
+Do not commit generated files from `examples/outputfiles/`.

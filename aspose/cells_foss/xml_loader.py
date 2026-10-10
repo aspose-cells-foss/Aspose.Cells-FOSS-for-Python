@@ -21,6 +21,8 @@ from .xml_datavalidation_loader import DataValidationXmlLoader
 from .xml_chart_loader import ChartXmlLoader
 from .xml_table_loader import TableXmlLoader
 from .xml_sparkline_loader import SparklineXmlLoader
+from .style_resolver import StyleResolver
+from .rich_text import RichTextRun
 
 
 class XMLLoader:
@@ -124,8 +126,8 @@ class XMLLoader:
         # Detect chartsheets and preserve their parts for round-trip.
         self._load_chartsheets(zipf, workbook_root)
 
-        # Apply worksheet print areas from workbook defined names.
-        self._apply_print_areas_from_defined_names()
+        # Apply worksheet print areas/titles from workbook defined names.
+        self._apply_print_settings_from_defined_names()
 
         # Load extra workbook rels (external links, etc.) for round-trip preservation
         self._load_extra_workbook_rels(zipf)
@@ -174,12 +176,40 @@ class XMLLoader:
 
     def _load_theme(self, zipf):
         """
-        Loads xl/theme/theme1.xml bytes for roundtrip preservation.
+        Loads the workbook theme and its color scheme.
         """
         try:
             self.workbook._theme_xml = zipf.read('xl/theme/theme1.xml')
         except KeyError:
             self.workbook._theme_xml = None
+            self.workbook._theme_colors = {}
+            return
+
+        self.workbook._theme_colors = {}
+        try:
+            root = ET.fromstring(self.workbook._theme_xml)
+        except ET.ParseError:
+            return
+
+        drawing_ns = {
+            'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'
+        }
+        scheme = root.find('.//a:clrScheme', namespaces=drawing_ns)
+        if scheme is None:
+            return
+        for name in (
+            'lt1', 'dk1', 'lt2', 'dk2',
+            'accent1', 'accent2', 'accent3',
+            'accent4', 'accent5', 'accent6',
+            'hlink', 'folHlink',
+        ):
+            color_group = scheme.find(f'a:{name}', namespaces=drawing_ns)
+            if color_group is None or not list(color_group):
+                continue
+            color = list(color_group)[0]
+            value = color.get('lastClr') or color.get('val')
+            if value:
+                self.workbook._theme_colors[name] = 'FF' + value[-6:].upper()
     
     def _load_workbook_properties(self, workbook_root):
         """
@@ -390,22 +420,29 @@ class XMLLoader:
 
         return parts, overrides
 
-    def _apply_print_areas_from_defined_names(self):
+    def _apply_print_settings_from_defined_names(self):
         """
-        Applies worksheet print area values from workbook defined names.
+        Applies worksheet print areas and repeated titles from defined names.
         """
         defined_names = getattr(self.workbook.properties, 'defined_names', None)
         if defined_names is None:
             return
 
         for dn in defined_names:
-            if dn.name != '_xlnm.Print_Area':
+            if dn.name not in ('_xlnm.Print_Area', '_xlnm.Print_Titles'):
                 continue
             sheet_id = dn.local_sheet_id
             if sheet_id is None or sheet_id < 0 or sheet_id >= len(self.workbook._worksheets):
                 continue
             worksheet = self.workbook._worksheets[sheet_id]
-            worksheet._print_area = self._extract_print_area(dn.refers_to, worksheet.name)
+            if dn.name == '_xlnm.Print_Area':
+                worksheet._print_area = self._extract_print_area(
+                    dn.refers_to, worksheet.name
+                )
+            else:
+                rows, columns = self._extract_print_titles(dn.refers_to)
+                worksheet.page_setup.print_title_rows = rows
+                worksheet.page_setup.print_title_columns = columns
 
     def _extract_print_area(self, refers_to, sheet_name):
         """
@@ -420,7 +457,7 @@ class XMLLoader:
             return None
 
         parts = []
-        for token in str(refers_to).split(','):
+        for token in self._split_defined_name_references(refers_to):
             part = token.strip()
             if not part:
                 continue
@@ -434,6 +471,45 @@ class XMLLoader:
         if not parts:
             return None
         return ','.join(parts)
+
+    def _extract_print_titles(self, refers_to):
+        rows = None
+        columns = None
+        for token in self._split_defined_name_references(refers_to):
+            address = token.rsplit('!', 1)[-1].replace('$', '').strip().upper()
+            if re.fullmatch(r'\d+(?::\d+)?', address):
+                rows = address
+            elif re.fullmatch(r'[A-Z]+(?::[A-Z]+)?', address):
+                columns = address
+        return rows, columns
+
+    @staticmethod
+    def _split_defined_name_references(refers_to):
+        parts = []
+        current = []
+        quoted = False
+        text = str(refers_to or '')
+        index = 0
+        while index < len(text):
+            char = text[index]
+            if char == "'":
+                if quoted and index + 1 < len(text) and text[index + 1] == "'":
+                    current.extend((char, char))
+                    index += 2
+                    continue
+                quoted = not quoted
+            if char == ',' and not quoted:
+                part = ''.join(current).strip()
+                if part:
+                    parts.append(part)
+                current = []
+            else:
+                current.append(char)
+            index += 1
+        part = ''.join(current).strip()
+        if part:
+            parts.append(part)
+        return parts
     
     def _load_shared_strings(self, zipf):
         """
@@ -446,14 +522,93 @@ class XMLLoader:
             shared_strings_content = zipf.read('xl/sharedStrings.xml')
             shared_strings_root = ET.fromstring(shared_strings_content)
             self.workbook._shared_strings = []
+            self.workbook._shared_string_runs = []
             for si in shared_strings_root.findall('.//main:si', namespaces=self.ns):
                 text_parts = [
                     t.text if t.text is not None else ''
                     for t in si.findall('.//main:t', namespaces=self.ns)
                 ]
                 self.workbook._shared_strings.append(''.join(text_parts))
+                rich_runs = tuple(
+                    self._parse_shared_string_run(run)
+                    for run in si.findall('main:r', namespaces=self.ns)
+                )
+                self.workbook._shared_string_runs.append(rich_runs)
         except KeyError:
             self.workbook._shared_strings = []
+            self.workbook._shared_string_runs = []
+
+    def _parse_shared_string_run(self, run):
+        text = ''.join(
+            node.text if node.text is not None else ''
+            for node in run.findall('main:t', namespaces=self.ns)
+        )
+        properties = run.find('main:rPr', namespaces=self.ns)
+        if properties is None:
+            return RichTextRun(text=text)
+
+        font_name = properties.find('main:rFont', namespaces=self.ns)
+        font_size = properties.find('main:sz', namespaces=self.ns)
+        color = properties.find('main:color', namespaces=self.ns)
+        underline = properties.find('main:u', namespaces=self.ns)
+        vertical_alignment = properties.find(
+            'main:vertAlign', namespaces=self.ns
+        )
+        return RichTextRun(
+            text=text,
+            font_name=(font_name.get('val') if font_name is not None else None),
+            font_size=(
+                float(font_size.get('val'))
+                if font_size is not None and font_size.get('val') is not None
+                else None
+            ),
+            font_color=self._resolve_color_element(color),
+            bold=self._optional_run_property(properties, 'b'),
+            italic=self._optional_run_property(properties, 'i'),
+            underline=self._optional_run_property(properties, 'u'),
+            underline_type=(
+                underline.get('val', 'single')
+                if underline is not None else None
+            ),
+            strikethrough=self._optional_run_property(properties, 'strike'),
+            vertical_alignment=(
+                vertical_alignment.get('val', 'baseline')
+                if vertical_alignment is not None else 'baseline'
+            ),
+        )
+
+    def _resolve_color_element(self, color):
+        if color is None:
+            return None
+        rgb = color.get('rgb')
+        if rgb:
+            return rgb.upper() if len(rgb) == 8 else 'FF' + rgb.upper()
+        theme = color.get('theme')
+        if theme is not None:
+            return self._resolve_theme_color(theme)
+        return None
+
+    @staticmethod
+    def _optional_run_property(properties, name):
+        element = properties.find(
+            f'{{http://schemas.openxmlformats.org/spreadsheetml/2006/main}}{name}'
+        )
+        if element is None:
+            return None
+        return element.get('val', '1') not in ('0', 'false', 'False', 'none')
+
+    def _resolve_theme_color(self, theme_index):
+        names = (
+            'lt1', 'dk1', 'lt2', 'dk2',
+            'accent1', 'accent2', 'accent3',
+            'accent4', 'accent5', 'accent6',
+            'hlink', 'folHlink',
+        )
+        try:
+            name = names[int(theme_index)]
+        except (TypeError, ValueError, IndexError):
+            return None
+        return self.workbook._theme_colors.get(name)
     
     def _load_styles(self, zipf):
         """
@@ -471,6 +626,7 @@ class XMLLoader:
             self._load_styles_xml(styles_root)
             # Load differential formatting (dxf) for conditional formatting
             self._load_dxf_styles(styles_root)
+            self._load_table_styles(styles_root)
         except KeyError:
             # Use default styles
             from .xml_saver import XMLSaver
@@ -810,6 +966,25 @@ class XMLLoader:
         # Load worksheet properties
         self._load_worksheet_properties(worksheet, worksheet_root)
 
+        # Manual break ids identify the row/column immediately before the
+        # next printed page. Preserve them for PDF pagination and round-trip.
+        worksheet._horizontal_page_breaks = {
+            int(item.get('id'))
+            for item in worksheet_root.findall(
+                'main:rowBreaks/main:brk', namespaces=self.ns
+            )
+            if item.get('id') is not None
+            and item.get('man', '1') in ('1', 'true', 'True')
+        }
+        worksheet._vertical_page_breaks = {
+            int(item.get('id'))
+            for item in worksheet_root.findall(
+                'main:colBreaks/main:brk', namespaces=self.ns
+            )
+            if item.get('id') is not None
+            and item.get('man', '1') in ('1', 'true', 'True')
+        }
+
         # Load column widths and row heights
         self._load_column_dimensions(worksheet, worksheet_root)
         self._load_row_heights(worksheet, worksheet_root)
@@ -861,7 +1036,15 @@ class XMLLoader:
                 
                 # Create cell with value and formula
                 from .cell import Cell
-                cell = Cell(value, formula)
+                cell = Cell(value, formula, worksheet=worksheet)
+                if cell_type == 's' and v_elem is not None and v_elem.text is not None:
+                    try:
+                        shared_string_index = int(value_str)
+                        cell._rich_text_runs = self.workbook._shared_string_runs[
+                            shared_string_index
+                        ]
+                    except (ValueError, IndexError):
+                        cell._rich_text_runs = ()
                 
                 # Apply style (including style 0/default) if available in style table.
                 self._apply_cell_style(cell, style_idx)
@@ -901,6 +1084,8 @@ class XMLLoader:
             worksheet._column_widths = {}
         if not hasattr(worksheet, '_column_styles'):
             worksheet._column_styles = {}
+        if not hasattr(worksheet, '_best_fit_columns'):
+            worksheet._best_fit_columns = set()
         if not hasattr(worksheet, '_hidden_columns'):
             worksheet._hidden_columns = set()
 
@@ -910,6 +1095,7 @@ class XMLLoader:
             width_val = col_elem.get('width')
             style_val = col_elem.get('style')
             hidden_val = col_elem.get('hidden')
+            best_fit_val = col_elem.get('bestFit')
             if min_val is None or max_val is None:
                 raise ValueError("Invalid column definition: missing min or max")
             try:
@@ -937,6 +1123,8 @@ class XMLLoader:
                         worksheet._column_styles[col_idx] = int(style_val)
                     except ValueError:
                         pass
+                if best_fit_val in ('1', 'true', 'True'):
+                    worksheet._best_fit_columns.add(col_idx)
                 if hidden_val in ('1', 'true', 'True'):
                     worksheet._hidden_columns.add(col_idx)
 
@@ -946,6 +1134,10 @@ class XMLLoader:
         """
         if not hasattr(worksheet, '_row_heights'):
             worksheet._row_heights = {}
+        if not hasattr(worksheet, '_custom_height_rows'):
+            worksheet._custom_height_rows = set()
+        if not hasattr(worksheet, '_loaded_height_rows'):
+            worksheet._loaded_height_rows = set()
         if not hasattr(worksheet, '_hidden_rows'):
             worksheet._hidden_rows = set()
 
@@ -972,6 +1164,9 @@ class XMLLoader:
                 if height <= 0:
                     raise ValueError("Row height must be > 0")
                 worksheet._row_heights[row_idx] = height
+                worksheet._loaded_height_rows.add(row_idx)
+                if row_elem.get('customHeight') in ('1', 'true', 'True'):
+                    worksheet._custom_height_rows.add(row_idx)
             if hidden_val in ('1', 'true', 'True'):
                 worksheet._hidden_rows.add(row_idx)
 
@@ -983,80 +1178,10 @@ class XMLLoader:
             cell (Cell): The cell to apply style to.
             style_idx (int): The style index to apply.
         """
-        cell_style_key = None
-        if hasattr(self.workbook, '_cell_xf_by_index'):
-            cell_style_key = self.workbook._cell_xf_by_index.get(style_idx)
-        if cell_style_key is None:
-            for style_key, cell_style_idx in self.workbook._cell_styles.items():
-                if cell_style_idx == style_idx:
-                    cell_style_key = style_key
-                    break
-
-        if cell_style_key is None:
-            return
-
         # Preserve original style index for lossless roundtrip.
         cell._source_style_idx = style_idx
-
-        font_key, fill_key, border_key, num_fmt_key, alignment_key, protection_key = cell_style_key
-
-        # Apply font
-        if font_key in self.workbook._font_styles:
-            font_data = self.workbook._font_styles[font_key]
-            cell.style.font.name = font_data['name']
-            cell.style.font.size = font_data['size']
-            cell.style.font.color = font_data['color']
-            cell.style.font.bold = font_data['bold']
-            cell.style.font.italic = font_data['italic']
-            cell.style.font.underline = font_data['underline']
-            cell.style.font.strikethrough = font_data['strikethrough']
-
-        # Apply fill
-        if fill_key in self.workbook._fill_styles:
-            fill_data = self.workbook._fill_styles[fill_key]
-            cell.style.fill.pattern_type = fill_data['pattern_type']
-            cell.style.fill.foreground_color = fill_data['fg_color']
-            cell.style.fill.background_color = fill_data['bg_color']
-            cell.style.fill._fg_color_type = fill_data.get('fg_color_type', 'rgb')
-            cell.style.fill._fg_color_value = fill_data.get('fg_color_value', fill_data.get('fg_color'))
-            cell.style.fill._fg_color_tint = fill_data.get('fg_color_tint')
-            cell.style.fill._bg_color_type = fill_data.get('bg_color_type', 'rgb')
-            cell.style.fill._bg_color_value = fill_data.get('bg_color_value', fill_data.get('bg_color'))
-            cell.style.fill._bg_color_tint = fill_data.get('bg_color_tint')
-
-        # Apply border
-        if border_key in self.workbook._border_styles:
-            border_data = self.workbook._border_styles[border_key]
-            cell.style.borders.top.line_style = border_data['top']['style']
-            cell.style.borders.top.color = border_data['top']['color']
-            cell.style.borders.bottom.line_style = border_data['bottom']['style']
-            cell.style.borders.bottom.color = border_data['bottom']['color']
-            cell.style.borders.left.line_style = border_data['left']['style']
-            cell.style.borders.left.color = border_data['left']['color']
-            cell.style.borders.right.line_style = border_data['right']['style']
-            cell.style.borders.right.color = border_data['right']['color']
-
-        # Apply number format
-        if num_fmt_key in self.workbook._num_formats:
-            cell.style.number_format = self.workbook._num_formats[num_fmt_key]
-
-        # Apply alignment
-        if alignment_key in self.workbook._alignment_styles:
-            align_data = self.workbook._alignment_styles[alignment_key]
-            cell.style.alignment.horizontal = align_data['horizontal']
-            cell.style.alignment.vertical = align_data['vertical']
-            cell.style.alignment.wrap_text = align_data['wrap_text']
-            cell.style.alignment.indent = align_data['indent']
-            cell.style.alignment.text_rotation = align_data['text_rotation']
-            cell.style.alignment.shrink_to_fit = align_data['shrink_to_fit']
-            cell.style.alignment.reading_order = align_data['reading_order']
-            cell.style.alignment.relative_indent = align_data['relative_indent']
-
-        # Apply protection
-        if protection_key in self.workbook._protection_styles:
-            prot_data = self.workbook._protection_styles[protection_key]
-            cell.style.protection.locked = prot_data['locked']
-            cell.style.protection.hidden = prot_data['hidden']
+        cell._style_index = style_idx
+        cell.style = StyleResolver.style_from_index(self.workbook, style_idx)
 
     def _load_styles_xml(self, styles_root):
         """
@@ -1140,17 +1265,23 @@ class XMLLoader:
             i_elem = font_elem.find('main:i', namespaces=self.ns)
             u_elem = font_elem.find('main:u', namespaces=self.ns)
             strike_elem = font_elem.find('main:strike', namespaces=self.ns)
+            vertical_alignment_elem = font_elem.find(
+                'main:vertAlign', namespaces=self.ns
+            )
 
             color_type = None
             color_value = None
             color_tint = None
+            resolved_color = None
             if color_elem is not None:
                 if color_elem.get('rgb') is not None:
                     color_type = 'rgb'
                     color_value = color_elem.get('rgb')
+                    resolved_color = color_value
                 elif color_elem.get('theme') is not None:
                     color_type = 'theme'
                     color_value = color_elem.get('theme')
+                    resolved_color = self._resolve_theme_color(color_value)
                 elif color_elem.get('indexed') is not None:
                     color_type = 'indexed'
                     color_value = color_elem.get('indexed')
@@ -1163,7 +1294,7 @@ class XMLLoader:
             font_data = {
                 'name': name_elem.get('val') if name_elem is not None else 'Calibri',
                 'size': float(sz_elem.get('val', 11)) if sz_elem is not None else 11,
-                'color': color_value if color_type == 'rgb' else 'FF000000',
+                'color': resolved_color or 'FF000000',
                 'color_type': color_type,
                 'color_value': color_value,
                 'color_tint': color_tint,
@@ -1173,6 +1304,14 @@ class XMLLoader:
                 'bold': b_elem is not None,
                 'italic': i_elem is not None,
                 'underline': u_elem is not None,
+                'underline_type': (
+                    u_elem.get('val', 'single')
+                    if u_elem is not None else 'none'
+                ),
+                'vertical_alignment': (
+                    vertical_alignment_elem.get('val', 'baseline')
+                    if vertical_alignment_elem is not None else 'baseline'
+                ),
                 'strikethrough': strike_elem is not None
             }
             self.workbook._font_styles[i] = font_data
@@ -1185,6 +1324,8 @@ class XMLLoader:
                 default_font.bold = font_data['bold']
                 default_font.italic = font_data['italic']
                 default_font.underline = font_data['underline']
+                default_font.underline_type = font_data['underline_type']
+                default_font.vertical_alignment = font_data['vertical_alignment']
                 default_font.strikethrough = font_data['strikethrough']
                 # Only apply explicit RGB color to style font.
                 if font_data['color_type'] == 'rgb' and font_data['color_value']:
@@ -1249,48 +1390,97 @@ class XMLLoader:
             right_elem = border_elem.find('main:right', namespaces=self.ns)
             top_elem = border_elem.find('main:top', namespaces=self.ns)
             bottom_elem = border_elem.find('main:bottom', namespaces=self.ns)
+            diagonal_elem = border_elem.find(
+                'main:diagonal', namespaces=self.ns
+            )
             
             # Load left border
             left_style = 'none'
             left_color = 'FF000000'
+            left_automatic = False
             if left_elem is not None:
                 left_style = left_elem.get('style', 'none')
                 left_color_elem = left_elem.find('main:color', namespaces=self.ns)
                 if left_color_elem is not None:
                     left_color = left_color_elem.get('rgb', 'FF000000')
+                    left_automatic = left_color_elem.get('auto') in (
+                        '1', 'true', 'True'
+                    )
             
             # Load right border
             right_style = 'none'
             right_color = 'FF000000'
+            right_automatic = False
             if right_elem is not None:
                 right_style = right_elem.get('style', 'none')
                 right_color_elem = right_elem.find('main:color', namespaces=self.ns)
                 if right_color_elem is not None:
                     right_color = right_color_elem.get('rgb', 'FF000000')
+                    right_automatic = right_color_elem.get('auto') in (
+                        '1', 'true', 'True'
+                    )
             
             # Load top border
             top_style = 'none'
             top_color = 'FF000000'
+            top_automatic = False
             if top_elem is not None:
                 top_style = top_elem.get('style', 'none')
                 top_color_elem = top_elem.find('main:color', namespaces=self.ns)
                 if top_color_elem is not None:
                     top_color = top_color_elem.get('rgb', 'FF000000')
+                    top_automatic = top_color_elem.get('auto') in (
+                        '1', 'true', 'True'
+                    )
             
             # Load bottom border
             bottom_style = 'none'
             bottom_color = 'FF000000'
+            bottom_automatic = False
             if bottom_elem is not None:
                 bottom_style = bottom_elem.get('style', 'none')
                 bottom_color_elem = bottom_elem.find('main:color', namespaces=self.ns)
                 if bottom_color_elem is not None:
                     bottom_color = bottom_color_elem.get('rgb', 'FF000000')
+                    bottom_automatic = bottom_color_elem.get('auto') in (
+                        '1', 'true', 'True'
+                    )
+
+            diagonal_style = 'none'
+            diagonal_color = 'FF000000'
+            if diagonal_elem is not None:
+                diagonal_style = diagonal_elem.get('style', 'none')
+                diagonal_color_elem = diagonal_elem.find(
+                    'main:color', namespaces=self.ns
+                )
+                if diagonal_color_elem is not None:
+                    diagonal_color = diagonal_color_elem.get(
+                        'rgb', 'FF000000'
+                    )
             
             border_data = {
-                'top': {'style': top_style, 'color': top_color},
-                'bottom': {'style': bottom_style, 'color': bottom_color},
-                'left': {'style': left_style, 'color': left_color},
-                'right': {'style': right_style, 'color': right_color}
+                'top': {
+                    'style': top_style, 'color': top_color,
+                    'automatic_color': top_automatic,
+                },
+                'bottom': {
+                    'style': bottom_style, 'color': bottom_color,
+                    'automatic_color': bottom_automatic,
+                },
+                'left': {
+                    'style': left_style, 'color': left_color,
+                    'automatic_color': left_automatic,
+                },
+                'right': {
+                    'style': right_style, 'color': right_color,
+                    'automatic_color': right_automatic,
+                },
+                'diagonal': {
+                    'style': diagonal_style,
+                    'color': diagonal_color,
+                },
+                'diagonal_up': border_elem.get('diagonalUp') in ('1', 'true'),
+                'diagonal_down': border_elem.get('diagonalDown') in ('1', 'true'),
             }
             self.workbook._border_styles[i] = border_data
     
@@ -1435,7 +1625,9 @@ class XMLLoader:
                     font_data['strikethrough'] = True
                 color_elem = font_elem.find('main:color', namespaces=self.ns)
                 if color_elem is not None:
-                    font_data['color'] = color_elem.get('rgb', 'FF000000')
+                    font_data['color'] = self._resolve_dxf_color(
+                        color_elem, 'FF000000'
+                    )
                 if font_data:
                     dxf_data['font'] = font_data
 
@@ -1449,28 +1641,94 @@ class XMLLoader:
                     }
                     fg_elem = pattern_elem.find('main:fgColor', namespaces=self.ns)
                     if fg_elem is not None:
-                        fill_data['fg_color'] = fg_elem.get('rgb', 'FFFFFFFF')
+                        fill_data['fg_color'] = self._resolve_dxf_color(
+                            fg_elem, 'FFFFFFFF'
+                        )
                     bg_elem = pattern_elem.find('main:bgColor', namespaces=self.ns)
                     if bg_elem is not None:
-                        fill_data['bg_color'] = bg_elem.get('rgb', 'FFFFFFFF')
+                        background_color = self._resolve_dxf_color(
+                            bg_elem, 'FFFFFFFF'
+                        )
+                        fill_data['bg_color'] = background_color
+                        if (
+                            fg_elem is None
+                            or (
+                                fg_elem.get('theme') is not None
+                                and bg_elem.get('rgb') is not None
+                            )
+                        ):
+                            # Excel uses a lone DXF background color as the
+                            # visible solid color for preset rules. Custom
+                            # table styles also retain their concrete RGB in
+                            # bgColor while fgColor points at a theme slot.
+                            fill_data['fg_color'] = background_color
                     dxf_data['fill'] = fill_data
 
             # Load border (simplified - just check if any border is present)
             border_elem = dxf_elem.find('main:border', namespaces=self.ns)
             if border_elem is not None:
-                # Check any side for style
-                for side in ['left', 'right', 'top', 'bottom']:
+                borders = {}
+                for side in ['left', 'right', 'top', 'bottom', 'horizontal']:
                     side_elem = border_elem.find(f'main:{side}', namespaces=self.ns)
-                    if side_elem is not None:
-                        style = side_elem.get('style', 'thin')
+                    if side_elem is not None and side_elem.get('style'):
                         color = 'FF000000'
                         color_elem = side_elem.find('main:color', namespaces=self.ns)
                         if color_elem is not None:
-                            color = color_elem.get('rgb', 'FF000000')
-                        dxf_data['border'] = {'style': style, 'color': color}
-                        break
+                            color = self._resolve_dxf_color(
+                                color_elem, 'FF000000'
+                            )
+                        borders[side] = {
+                            'style': side_elem.get('style'),
+                            'color': color,
+                        }
+                if borders:
+                    dxf_data['borders'] = borders
+                    first = next(iter(borders.values()))
+                    dxf_data['border'] = dict(first)
 
             self.workbook._dxf_styles.append(dxf_data)
+
+    def _load_table_styles(self, styles_root):
+        self.workbook._table_styles = {}
+        table_styles = styles_root.find(
+            './/main:tableStyles', namespaces=self.ns
+        )
+        if table_styles is None:
+            return
+        for style in table_styles.findall('main:tableStyle', namespaces=self.ns):
+            name = style.get('name')
+            if not name:
+                continue
+            elements = {}
+            for element in style.findall(
+                'main:tableStyleElement', namespaces=self.ns
+            ):
+                try:
+                    dxf_id = int(element.get('dxfId'))
+                except (TypeError, ValueError):
+                    continue
+                elements[element.get('type')] = {
+                    'dxf_id': dxf_id,
+                    'size': int(element.get('size', '1')),
+                }
+            self.workbook._table_styles[name] = elements
+
+    def _resolve_dxf_color(self, element, default):
+        color = self._resolve_color_element(element) or default
+        tint_value = element.get('tint')
+        if tint_value is None:
+            return color
+        try:
+            tint = float(tint_value)
+            rgb = color[-6:]
+            channels = [int(rgb[index:index + 2], 16) for index in (0, 2, 4)]
+        except (TypeError, ValueError):
+            return color
+        if tint >= 0:
+            channels = [round(value + (255 - value) * tint) for value in channels]
+        else:
+            channels = [round(value * (1.0 + tint)) for value in channels]
+        return 'FF' + ''.join(f'{max(0, min(255, value)):02X}' for value in channels)
 
     def _load_document_properties(self, zipf):
         """

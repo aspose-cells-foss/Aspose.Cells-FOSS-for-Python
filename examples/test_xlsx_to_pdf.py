@@ -1,4 +1,4 @@
-"""Interactive XLSX-to-JSON conversion example."""
+"""Interactive XLSX-to-PDF conversion example."""
 
 import os
 import sys
@@ -11,8 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from aspose.cells_foss import Workbook
 
 
-def convert_xlsx_to_json(source_path, target_path):
-    """Convert an XLSX workbook to JSON and return the output path."""
+def convert_xlsx_to_pdf(source_path, target_path):
+    """Convert an XLSX workbook to PDF and return the output path."""
     source = Path(source_path).expanduser()
     target = Path(target_path).expanduser()
 
@@ -22,26 +22,26 @@ def convert_xlsx_to_json(source_path, target_path):
     target.parent.mkdir(parents=True, exist_ok=True)
 
     workbook = Workbook(str(source))
-    workbook.save_as_json(str(target))
+    workbook.save_as_pdf(str(target))
     return target
 
 
 def main():
     """Prompt for file paths and perform the conversion."""
     source_path = input("Enter the source XLSX file path: ").strip().strip('"')
-    target_path = input("Enter the target JSON file path: ").strip().strip('"')
+    target_path = input("Enter the target PDF file path: ").strip().strip('"')
 
     if not source_path or not target_path:
         print("Both source and target file paths are required.", file=sys.stderr)
         return 1
 
     try:
-        output_path = convert_xlsx_to_json(source_path, target_path)
+        output_path = convert_xlsx_to_pdf(source_path, target_path)
     except Exception as exc:
         print(f"Conversion failed: {exc}", file=sys.stderr)
         return 1
 
-    print(f"JSON file created successfully: {output_path}")
+    print(f"PDF file created successfully: {output_path}")
     return 0
 
 

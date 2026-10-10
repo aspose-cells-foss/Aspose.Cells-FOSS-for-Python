@@ -466,8 +466,8 @@ class XMLSaver:
                     for _j in range(_ws_tables.count):
                         self._table_global_indices[(_i + 1, _j)] = _global_table_num
                         _global_table_num += 1
-            # Sync worksheet print areas into workbook defined names before workbook.xml is generated.
-            self._sync_print_areas_to_defined_names()
+            # Sync worksheet print settings before workbook.xml is generated.
+            self._sync_print_settings_to_defined_names()
             # Inject _xlchart.v1.x defined names for new chartEx charts before workbook.xml is written.
             self._inject_chartex_defined_names()
             # Apply compatibility defaults for new chartEx workbooks.
@@ -782,39 +782,53 @@ class XMLSaver:
             if ws.properties.format.dy_descent is None:
                 ws.properties.format.dy_descent = 0.3
 
-    def _sync_print_areas_to_defined_names(self):
+    def _sync_print_settings_to_defined_names(self):
         """
-        Synchronizes worksheet print areas with workbook defined names.
+        Synchronizes worksheet print areas/titles with workbook defined names.
 
-        Excel stores print areas as local defined names named '_xlnm.Print_Area'
-        in workbook.xml (one per worksheet that has a print area).
+        Excel stores these as sheet-local built-in names in workbook.xml.
         """
         defined_names = self._workbook.properties.defined_names
-        existing = [dn for dn in defined_names if dn.name != '_xlnm.Print_Area']
+        print_names = {'_xlnm.Print_Area', '_xlnm.Print_Titles'}
+        existing = [dn for dn in defined_names if dn.name not in print_names]
         defined_names._names = existing
 
         for sheet_idx, worksheet in enumerate(self._workbook.worksheets):
             print_area = getattr(worksheet, '_print_area', None)
-            if not print_area:
-                continue
-
             sheet_name = worksheet.name.replace("'", "''")
             refs = []
-            for token in str(print_area).split(','):
-                part = token.strip().upper()
-                if not part:
-                    continue
-                if ':' in part:
-                    start_ref, end_ref = part.split(':', 1)
-                else:
-                    start_ref, end_ref = part, part
-                abs_start = self._to_absolute_a1_ref(start_ref)
-                abs_end = self._to_absolute_a1_ref(end_ref)
-                abs_ref = f"{abs_start}:{abs_end}" if abs_start != abs_end else abs_start
-                refs.append(f"'{sheet_name}'!{abs_ref}")
+            if print_area:
+                for token in str(print_area).split(','):
+                    part = token.strip().upper()
+                    if not part:
+                        continue
+                    if ':' in part:
+                        start_ref, end_ref = part.split(':', 1)
+                    else:
+                        start_ref, end_ref = part, part
+                    abs_start = self._to_absolute_a1_ref(start_ref)
+                    abs_end = self._to_absolute_a1_ref(end_ref)
+                    abs_ref = f"{abs_start}:{abs_end}" if abs_start != abs_end else abs_start
+                    refs.append(f"'{sheet_name}'!{abs_ref}")
 
             if refs:
                 defined_names.add('_xlnm.Print_Area', ','.join(refs), local_sheet_id=sheet_idx)
+
+            title_refs = []
+            title_rows = worksheet.page_setup.print_title_rows
+            title_columns = worksheet.page_setup.print_title_columns
+            if title_rows:
+                start, end = title_rows.split(':', 1)
+                title_refs.append(f"'{sheet_name}'!${start}:${end}")
+            if title_columns:
+                start, end = title_columns.split(':', 1)
+                title_refs.append(f"'{sheet_name}'!${start}:${end}")
+            if title_refs:
+                defined_names.add(
+                    '_xlnm.Print_Titles',
+                    ','.join(title_refs),
+                    local_sheet_id=sheet_idx,
+                )
 
     def _to_absolute_a1_ref(self, ref):
         """
@@ -1174,7 +1188,12 @@ class XMLSaver:
         content += self._ws_props_writer.format_sheet_format_pr_xml(ws_props.format)
 
         # Write column widths/hidden columns if configured
-        if getattr(worksheet, '_column_widths', None) or getattr(worksheet, '_hidden_columns', None):
+        if (
+            getattr(worksheet, '_column_widths', None)
+            or getattr(worksheet, '_column_styles', None)
+            or getattr(worksheet, '_best_fit_columns', None)
+            or getattr(worksheet, '_hidden_columns', None)
+        ):
             content += self._format_cols_xml(worksheet)
 
         content += '    <sheetData>\n'
@@ -1211,7 +1230,8 @@ class XMLSaver:
                 row_height = worksheet._row_heights.get(row_num)
             if row_height is not None:
                 row_attrs.append(f'ht="{row_height}"')
-                row_attrs.append('customHeight="1"')
+                if row_num in getattr(worksheet, '_custom_height_rows', set()):
+                    row_attrs.append('customHeight="1"')
             if getattr(worksheet, '_hidden_rows', None) and row_num in worksheet._hidden_rows:
                 row_attrs.append('hidden="1"')
             content += f'        <row {" ".join(row_attrs)}>\n'
@@ -1310,12 +1330,18 @@ class XMLSaver:
         """
         col_widths = getattr(worksheet, '_column_widths', None) or {}
         col_styles = getattr(worksheet, '_column_styles', None) or {}
+        best_fit_cols = getattr(worksheet, '_best_fit_columns', None) or set()
         hidden_cols = getattr(worksheet, '_hidden_columns', None) or set()
-        if not col_widths and not hidden_cols and not col_styles:
+        if not col_widths and not hidden_cols and not col_styles and not best_fit_cols:
             return ''
 
         lines = ['    <cols>']
-        all_cols = sorted(set(col_widths.keys()) | set(hidden_cols) | set(col_styles.keys()))
+        all_cols = sorted(
+            set(col_widths.keys())
+            | set(hidden_cols)
+            | set(col_styles.keys())
+            | set(best_fit_cols)
+        )
         default_width = getattr(getattr(worksheet, 'properties', None).format, 'default_col_width', None)
 
         def col_signature(col_idx):
@@ -1323,6 +1349,7 @@ class XMLSaver:
                 col_widths.get(col_idx),
                 col_styles.get(col_idx),
                 col_idx in hidden_cols,
+                col_idx in best_fit_cols,
             )
 
         range_start = all_cols[0]
@@ -1330,7 +1357,7 @@ class XMLSaver:
         current_sig = col_signature(all_cols[0])
 
         def emit_range(start_idx, end_idx, sig):
-            width, style_idx, hidden = sig
+            width, style_idx, hidden, best_fit = sig
             attrs = [f'min="{start_idx}"', f'max="{end_idx}"']
             if width is not None:
                 attrs.append(f'width="{width}"')
@@ -1338,6 +1365,8 @@ class XMLSaver:
                     attrs.append('customWidth="1"')
             if style_idx is not None:
                 attrs.append(f'style="{style_idx}"')
+            if best_fit:
+                attrs.append('bestFit="1"')
             if hidden:
                 attrs.append('hidden="1"')
             lines.append(f'        <col {" ".join(attrs)}/>')
@@ -1884,9 +1913,20 @@ class XMLSaver:
         if font_data.get('italic'):
             xml += '            <i/>\n'
         if font_data.get('underline'):
-            xml += '            <u/>\n'
+            underline_type = font_data.get('underline_type', 'single')
+            if underline_type in (None, 'single'):
+                xml += '            <u/>\n'
+            else:
+                xml += f'            <u val="{underline_type}"/>\n'
         if font_data.get('strikethrough'):
             xml += '            <strike/>\n'
+        vertical_alignment = font_data.get(
+            'vertical_alignment', 'baseline'
+        )
+        if vertical_alignment in ('superscript', 'subscript'):
+            xml += (
+                f'            <vertAlign val="{vertical_alignment}"/>\n'
+            )
         xml += f'            <sz val="{font_data["size"]}"/>\n'
         color_type = font_data.get('color_type', 'rgb')
         color_value = font_data.get('color_value', font_data.get('color', 'FF000000'))
@@ -1947,7 +1987,12 @@ class XMLSaver:
             side_data = border_data[side]
             if side_data['style'] != 'none':
                 xml += f'            <{side} style="{side_data["style"]}">\n'
-                xml += f'                <color rgb="{side_data["color"]}"/>\n'
+                if side_data.get('automatic_color'):
+                    xml += '                <color auto="1"/>\n'
+                else:
+                    xml += (
+                        f'                <color rgb="{side_data["color"]}"/>\n'
+                    )
                 xml += f'            </{side}>\n'
         xml += '        </border>\n'
         return xml
@@ -2142,6 +2187,8 @@ class XMLSaver:
                 'bold': False,
                 'italic': False,
                 'underline': False,
+                'underline_type': 'none',
+                'vertical_alignment': 'baseline',
                 'strikethrough': False
             }
         
@@ -2174,10 +2221,22 @@ class XMLSaver:
         # Default borders
         if 0 not in self._workbook._border_styles:
             self._workbook._border_styles[0] = {
-                'top': {'style': 'none', 'color': 'FF000000'},
-                'bottom': {'style': 'none', 'color': 'FF000000'},
-                'left': {'style': 'none', 'color': 'FF000000'},
-                'right': {'style': 'none', 'color': 'FF000000'}
+                'top': {
+                    'style': 'none', 'color': 'FF000000',
+                    'automatic_color': False,
+                },
+                'bottom': {
+                    'style': 'none', 'color': 'FF000000',
+                    'automatic_color': False,
+                },
+                'left': {
+                    'style': 'none', 'color': 'FF000000',
+                    'automatic_color': False,
+                },
+                'right': {
+                    'style': 'none', 'color': 'FF000000',
+                    'automatic_color': False,
+                },
             }
 
         # Default protection (locked=True, hidden=False)
@@ -2210,6 +2269,16 @@ class XMLSaver:
                 font_data['bold'] == font.bold and
                 font_data['italic'] == font.italic and
                 font_data['underline'] == font.underline and
+                font_data.get(
+                    'underline_type',
+                    'single' if font_data['underline'] else 'none',
+                ) == getattr(
+                    font, 'underline_type',
+                    'single' if font.underline else 'none',
+                ) and
+                font_data.get('vertical_alignment', 'baseline') == getattr(
+                    font, 'vertical_alignment', 'baseline'
+                ) and
                 font_data['strikethrough'] == font.strikethrough):
                 return idx
         
@@ -2222,6 +2291,13 @@ class XMLSaver:
             'bold': font.bold,
             'italic': font.italic,
             'underline': font.underline,
+            'underline_type': getattr(
+                font, 'underline_type',
+                'single' if font.underline else 'none',
+            ),
+            'vertical_alignment': getattr(
+                font, 'vertical_alignment', 'baseline'
+            ),
             'strikethrough': font.strikethrough
         }
         return new_idx
@@ -2268,21 +2344,45 @@ class XMLSaver:
         for idx, border_data in self._workbook._border_styles.items():
             if (border_data['top']['style'] == borders.top.line_style and
                 border_data['top']['color'] == borders.top.color and
+                border_data['top'].get('automatic_color', False) ==
+                borders.top.automatic_color and
                 border_data['bottom']['style'] == borders.bottom.line_style and
                 border_data['bottom']['color'] == borders.bottom.color and
+                border_data['bottom'].get('automatic_color', False) ==
+                borders.bottom.automatic_color and
                 border_data['left']['style'] == borders.left.line_style and
                 border_data['left']['color'] == borders.left.color and
+                border_data['left'].get('automatic_color', False) ==
+                borders.left.automatic_color and
                 border_data['right']['style'] == borders.right.line_style and
-                border_data['right']['color'] == borders.right.color):
+                border_data['right']['color'] == borders.right.color and
+                border_data['right'].get('automatic_color', False) ==
+                borders.right.automatic_color):
                 return idx
         
         # Create new border style with all four sides
         new_idx = len(self._workbook._border_styles)
         self._workbook._border_styles[new_idx] = {
-            'top': {'style': borders.top.line_style, 'color': borders.top.color},
-            'bottom': {'style': borders.bottom.line_style, 'color': borders.bottom.color},
-            'left': {'style': borders.left.line_style, 'color': borders.left.color},
-            'right': {'style': borders.right.line_style, 'color': borders.right.color}
+            'top': {
+                'style': borders.top.line_style,
+                'color': borders.top.color,
+                'automatic_color': borders.top.automatic_color,
+            },
+            'bottom': {
+                'style': borders.bottom.line_style,
+                'color': borders.bottom.color,
+                'automatic_color': borders.bottom.automatic_color,
+            },
+            'left': {
+                'style': borders.left.line_style,
+                'color': borders.left.color,
+                'automatic_color': borders.left.automatic_color,
+            },
+            'right': {
+                'style': borders.right.line_style,
+                'color': borders.right.color,
+                'automatic_color': borders.right.automatic_color,
+            }
         }
         return new_idx
     

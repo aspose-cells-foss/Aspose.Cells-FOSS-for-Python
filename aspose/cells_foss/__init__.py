@@ -17,6 +17,10 @@ from .worksheet import Worksheet
 from .cell import Cell
 from .cells import Cells
 from .style import Style, Font, NumberFormat
+from .style_resolver import StyleResolver
+from .text_measure import FontStrategy, TextMeasurer, FontResolution, MeasuredText, TextRun
+from .value_formatter import ValueFormatter, DisplayValueOptions
+from .rich_text import RichTextRun
 from .encryption_params import (
     AgileEncryptionParameters,
     StandardEncryptionParameters,
@@ -51,6 +55,16 @@ from .json_handler import (
     save_workbook_as_json
 )
 from .page_break import HorizontalPageBreakCollection, VerticalPageBreakCollection
+from .render_bounds import RenderBounds, WorksheetBoundsResolver
+from .row_height import RowHeightCalculator
+from .pdf_options import PdfSaveOptions
+from .pdf_layout import (
+    PdfCellLayout, PdfDataBarLayout, PdfIconSetLayout,
+    PdfPageLayout, PdfTextRunLayout,
+    PdfLayoutEngine,
+)
+from .pdf_exporter import PdfExporter
+from .pdf_renderer import SkiaPdfRenderer
 from .chart import ChartType, Chart, ChartCollection, NSeries, ChartSeries, ChartAxis, ChartErrorBars, ChartView3D
 from .picture import Picture, PictureCollection
 from .shape import (
@@ -67,7 +81,7 @@ from .sparkline import (
     SparklineGroup, SparklineGroupCollection,
 )
 
-__version__ = "26.7.0"
+__version__ = "26.10.0"
 __all__ = [
     "Workbook",
     "SaveFormat",
@@ -77,6 +91,15 @@ __all__ = [
     "Style",
     "Font",
     "NumberFormat",
+    "StyleResolver",
+    "FontStrategy",
+    "TextMeasurer",
+    "FontResolution",
+    "MeasuredText",
+    "TextRun",
+    "ValueFormatter",
+    "DisplayValueOptions",
+    "RichTextRun",
     "AgileEncryptionParameters",
     "StandardEncryptionParameters",
     "CipherAlgorithm",
@@ -103,6 +126,18 @@ __all__ = [
     "save_workbook_as_json",
     "HorizontalPageBreakCollection",
     "VerticalPageBreakCollection",
+    "RenderBounds",
+    "WorksheetBoundsResolver",
+    "RowHeightCalculator",
+    "PdfSaveOptions",
+    "PdfCellLayout",
+    "PdfDataBarLayout",
+    "PdfIconSetLayout",
+    "PdfPageLayout",
+    "PdfTextRunLayout",
+    "PdfLayoutEngine",
+    "PdfExporter",
+    "SkiaPdfRenderer",
     "ChartType",
     "Chart",
     "ChartCollection",

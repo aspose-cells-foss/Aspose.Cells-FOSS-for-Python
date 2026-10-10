@@ -237,11 +237,22 @@ class ConditionalFormatXMLWriter:
         # Determine if 2-color or 3-color scale
         is_3_color = cf.mid_color is not None or cf.color_scale_type == '3-color'
 
-        # Add cfvo elements (conditional format value objects)
-        xml += '                <cfvo type="min"/>\n'
-        if is_3_color:
-            xml += '                <cfvo type="percentile" val="50"/>\n'
-        xml += '                <cfvo type="max"/>\n'
+        thresholds = list(getattr(cf, '_color_scale_thresholds', ()) or ())
+        expected_count = 3 if is_3_color else 2
+        if len(thresholds) != expected_count:
+            thresholds = [{'type': 'min'}]
+            if is_3_color:
+                thresholds.append({'type': 'percentile', 'val': '50'})
+            thresholds.append({'type': 'max'})
+        for threshold in thresholds:
+            attrs = []
+            for name in ('type', 'val', 'gte'):
+                value = threshold.get(name)
+                if value is not None:
+                    attrs.append(
+                        f'{name}="{self._escape_xml(str(value))}"'
+                    )
+            xml += f'                <cfvo {" ".join(attrs)}/>\n'
 
         # Add color elements
         min_color = cf.min_color or 'FFF8696B'  # Default red
@@ -258,11 +269,36 @@ class ConditionalFormatXMLWriter:
 
     def _format_data_bar_xml(self, cf):
         """Formats a dataBar element for conditional formatting."""
-        xml = '            <dataBar>\n'
+        min_length = int(getattr(cf, '_data_bar_min_length', 10) or 0)
+        max_length = int(getattr(cf, '_data_bar_max_length', 90) or 0)
+        attrs = []
+        if min_length != 10:
+            attrs.append(f'minLength="{min_length}"')
+        if max_length != 90:
+            attrs.append(f'maxLength="{max_length}"')
+        if not getattr(cf, '_data_bar_show_value', True):
+            attrs.append('showValue="0"')
+        suffix = f' {" ".join(attrs)}' if attrs else ''
+        xml = f'            <dataBar{suffix}>\n'
 
         # Add cfvo elements
-        xml += '                <cfvo type="min"/>\n'
-        xml += '                <cfvo type="max"/>\n'
+        thresholds = list(
+            getattr(cf, '_data_bar_thresholds', ()) or ()
+        )
+        if len(thresholds) != 2:
+            thresholds = [{'type': 'min'}, {'type': 'max'}]
+        for threshold in thresholds:
+            threshold_attrs = []
+            for name in ('type', 'val', 'gte'):
+                value = threshold.get(name)
+                if value is not None:
+                    threshold_attrs.append(
+                        f'{name}="{self._escape_xml(str(value))}"'
+                    )
+            xml += (
+                f'                <cfvo {" ".join(threshold_attrs)}/>'
+                '\n'
+            )
 
         # Add color element
         bar_color = cf.bar_color or 'FF638EC6'  # Default blue
@@ -283,18 +319,33 @@ class ConditionalFormatXMLWriter:
 
         xml = f'            <iconSet {" ".join(attrs)}>\n'
 
-        # Add cfvo elements based on icon set type
-        # Determine number of icons
+        # Add cfvo elements based on icon set type.
         num_icons = 3
         if icon_set_type.startswith('4'):
             num_icons = 4
         elif icon_set_type.startswith('5'):
             num_icons = 5
 
-        # Add cfvo elements with percent thresholds
-        for i in range(num_icons):
-            percent_val = int(100 * i / num_icons)
-            xml += f'                <cfvo type="percent" val="{percent_val}"/>\n'
+        thresholds = list(
+            getattr(cf, '_icon_set_thresholds', ()) or ()
+        )
+        if len(thresholds) != num_icons:
+            thresholds = [
+                {'type': 'percent', 'val': str(int(100 * i / num_icons))}
+                for i in range(num_icons)
+            ]
+        for threshold in thresholds:
+            threshold_attrs = []
+            for name in ('type', 'val', 'gte'):
+                value = threshold.get(name)
+                if value is not None:
+                    threshold_attrs.append(
+                        f'{name}="{self._escape_xml(str(value))}"'
+                    )
+            xml += (
+                f'                <cfvo {" ".join(threshold_attrs)}/>'
+                '\n'
+            )
 
         xml += '            </iconSet>\n'
         return xml

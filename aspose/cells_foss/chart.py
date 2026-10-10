@@ -141,7 +141,8 @@ class ChartSeries:
     """Represents a single chart series."""
 
     def __init__(self, values, category_data=None, name=None, chart=None,
-                 chart_type=None, x_values=None, series_idx=None, series_order=None):
+                 chart_type=None, x_values=None, series_idx=None, series_order=None,
+                 bubble_sizes=None):
         self._values = values
         self._category_data = category_data
         self._name = name
@@ -151,6 +152,8 @@ class ChartSeries:
         # Combo/scatter extensions
         self._chart_type = chart_type   # ChartType for per-series type in combo charts (None = inherit from chart)
         self._x_values = x_values       # For scatter xVal formula (None = use category_data)
+        self._bubble_sizes = bubble_sizes  # Bubble size formula or cached literal values
+        self._bubble_3d = False
         self._error_bars = []           # List of ChartErrorBars
         self._series_idx = series_idx   # The <c:idx val="..."> value
         self._series_order = series_order  # The <c:order val="..."> value
@@ -205,6 +208,17 @@ class ChartSeries:
     @x_values.setter
     def x_values(self, value):
         self._x_values = value
+        if self._chart is not None:
+            self._chart._mark_dirty()
+
+    @property
+    def bubble_sizes(self):
+        """Bubble-size values or formula for bubble chart series."""
+        return self._bubble_sizes
+
+    @bubble_sizes.setter
+    def bubble_sizes(self, value):
+        self._bubble_sizes = value
         if self._chart is not None:
             self._chart._mark_dirty()
 
@@ -286,10 +300,12 @@ class ChartSeries:
             self._values, self._category_data, self._name, chart=chart,
             chart_type=self._chart_type, x_values=self._x_values,
             series_idx=self._series_idx, series_order=self._series_order,
+            bubble_sizes=self._bubble_sizes,
         )
         cloned._hidden = self._hidden
         cloned._is_subtotal = self._is_subtotal
         cloned._error_bars = [eb.copy() for eb in self._error_bars]
+        cloned._bubble_3d = self._bubble_3d
         return cloned
 
     @property
@@ -398,7 +414,8 @@ class NSeries:
         self._series = []
 
     def add(self, area, is_vertical=False, category_data=None, name=None,
-            chart_type=None, x_values=None, series_idx=None, series_order=None):
+            chart_type=None, x_values=None, series_idx=None, series_order=None,
+            bubble_sizes=None):
         """
         Adds a series to the chart.
 
@@ -422,17 +439,20 @@ class NSeries:
             area, category_data=category_data, name=name, chart=self._chart,
             chart_type=chart_type, x_values=x_values,
             series_idx=idx, series_order=order,
+            bubble_sizes=bubble_sizes,
         )
         self._series.append(ser)
         self._chart._mark_dirty()
         return len(self._series) - 1
 
     def Add(self, area, is_vertical=False, category_data=None, name=None,
-            chart_type=None, x_values=None, series_idx=None, series_order=None):
+            chart_type=None, x_values=None, series_idx=None, series_order=None,
+            bubble_sizes=None):
         """PascalCase alias of add()."""
         return self.add(area, is_vertical=is_vertical, category_data=category_data,
                         name=name, chart_type=chart_type, x_values=x_values,
-                        series_idx=series_idx, series_order=series_order)
+                        series_idx=series_idx, series_order=series_order,
+                        bubble_sizes=bubble_sizes)
 
     @property
     def count(self):
@@ -502,6 +522,8 @@ class Chart:
         self._upper_left_column_offset = 0
         self._lower_right_row_offset = 0
         self._lower_right_column_offset = 0
+        self._anchor_extent_width = None
+        self._anchor_extent_height = None
         self._source_chart_xml = None
         self._source_chart_rels_xml = None
         self._source_chart_extra_parts = []
@@ -518,6 +540,8 @@ class Chart:
         self._sub_charts = []   # List of dicts describing each sub-chart
         self._axes = []         # List of ChartAxis objects
         self._scatter_style = "lineMarker"
+        self._is_bubble = False
+        self._bubble_scale = 100.0
         self._disp_blanks_as = "gap"
         self._auto_title_deleted = False
         self._stock_style = "high_low_close"
@@ -1016,6 +1040,8 @@ class Chart:
         new_chart._upper_left_column_offset = self._upper_left_column_offset
         new_chart._lower_right_row_offset = self._lower_right_row_offset
         new_chart._lower_right_column_offset = self._lower_right_column_offset
+        new_chart._anchor_extent_width = self._anchor_extent_width
+        new_chart._anchor_extent_height = self._anchor_extent_height
         new_chart._source_chart_xml = self._source_chart_xml
         new_chart._source_chart_rels_xml = self._source_chart_rels_xml
         new_chart._source_chart_extra_parts = list(self._source_chart_extra_parts)
@@ -1030,6 +1056,8 @@ class Chart:
         new_chart._sub_charts = [dict(sc) for sc in self._sub_charts]
         new_chart._axes = [ax.copy() for ax in self._axes]
         new_chart._scatter_style = self._scatter_style
+        new_chart._is_bubble = self._is_bubble
+        new_chart._bubble_scale = self._bubble_scale
         new_chart._disp_blanks_as = self._disp_blanks_as
         new_chart._auto_title_deleted = self._auto_title_deleted
         new_chart._stock_style = self._stock_style

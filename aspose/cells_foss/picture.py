@@ -32,6 +32,10 @@ class Picture:
         self._source_cNvPr_extLst_xml = None   # raw XML string for extLst inside <xdr:cNvPr>
         self._source_blip_extLst_xml = None    # raw XML string for extLst inside <a:blip>
         self._source_spPr_xml = None           # raw XML string for inner content of <xdr:spPr>
+        self._transform_x = None
+        self._transform_y = None
+        self._transform_width = None
+        self._transform_height = None
 
     @property
     def name(self):
@@ -95,6 +99,10 @@ class Picture:
         pic._source_cNvPr_extLst_xml = self._source_cNvPr_extLst_xml
         pic._source_blip_extLst_xml = self._source_blip_extLst_xml
         pic._source_spPr_xml = self._source_spPr_xml
+        pic._transform_x = self._transform_x
+        pic._transform_y = self._transform_y
+        pic._transform_width = self._transform_width
+        pic._transform_height = self._transform_height
         return pic
 
 

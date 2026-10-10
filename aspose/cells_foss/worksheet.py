@@ -20,6 +20,10 @@ from .picture import PictureCollection
 from .shape import ShapeCollection
 from .table import TableCollection
 from .sparkline import SparklineGroupCollection
+from .render_bounds import WorksheetBoundsResolver
+from .style_resolver import StyleResolver
+from .text_measure import TextMeasurer
+from .row_height import RowHeightCalculator
 
 
 class SheetProtectionDictWrapper:
@@ -172,7 +176,10 @@ class Worksheet:
         self._source_drawing_extra_parts = []
         self._drawing_dirty = False
         self._row_heights = {}  # Row index -> height (points)
+        self._custom_height_rows = set()  # Rows whose height must not be auto-fitted
+        self._loaded_height_rows = set()  # Rows with effective ht loaded from XLSX
         self._column_widths = {}  # Column index -> width (characters)
+        self._best_fit_columns = set()  # Columns auto-fitted by Excel
         self._column_styles = {}  # Column index -> xf style index
         self._hidden_rows = set()  # Set of hidden row indices
         self._hidden_columns = set()  # Set of hidden column indices
@@ -183,26 +190,6 @@ class Worksheet:
         self._horizontal_page_breaks_collection = HorizontalPageBreakCollection(self)
         self._vertical_page_breaks_collection = VerticalPageBreakCollection(self)
         
-        # Page setup settings
-        self._page_setup = {
-            'orientation': None,  # 'portrait' or 'landscape'
-            'paper_size': None,  # Integer paper size
-            'scale': None,  # Integer scale (10-400)
-            'fit_to_width': None,  # Integer number of pages
-            'fit_to_height': None,  # Integer number of pages
-            'fit_to_page': False  # Boolean fit to page
-        }
-        
-        # Page margins (in inches)
-        self._page_margins = {
-            'left': 0.75,
-            'right': 0.75,
-            'top': 1.0,
-            'bottom': 1.0,
-            'header': 0.5,
-            'footer': 0.5
-        }
-    
     # Properties
     
     @property
@@ -314,47 +301,44 @@ class Worksheet:
 
     def set_page_orientation(self, orientation):
         """Set page orientation. orientation must be 'portrait' or 'landscape'."""
-        if orientation not in ('portrait', 'landscape'):
-            raise ValueError(f"Invalid orientation: {orientation!r}. Use 'portrait' or 'landscape'.")
-        self._page_setup['orientation'] = orientation
+        self._properties.page_setup.orientation = orientation
 
     def get_page_orientation(self):
         """Return the page orientation ('portrait', 'landscape', or None)."""
-        return self._page_setup.get('orientation')
+        return self._properties.page_setup.orientation
 
     def set_paper_size(self, paper_size):
         """Set the paper size (integer code, e.g. 9 = A4)."""
-        self._page_setup['paper_size'] = paper_size
+        self._properties.page_setup.paper_size = paper_size
 
     def get_paper_size(self):
         """Return the paper size integer code."""
-        return self._page_setup.get('paper_size')
+        return self._properties.page_setup.paper_size
 
     def set_page_margins(self, left=None, right=None, top=None, bottom=None,
                          header=None, footer=None):
         """Set page margins (in inches). Only provided values are updated."""
-        if left   is not None: self._page_margins['left']   = left
-        if right  is not None: self._page_margins['right']  = right
-        if top    is not None: self._page_margins['top']    = top
-        if bottom is not None: self._page_margins['bottom'] = bottom
-        if header is not None: self._page_margins['header'] = header
-        if footer is not None: self._page_margins['footer'] = footer
+        margins = self._properties.page_margins
+        if left is not None: margins.left = left
+        if right is not None: margins.right = right
+        if top is not None: margins.top = top
+        if bottom is not None: margins.bottom = bottom
+        if header is not None: margins.header = header
+        if footer is not None: margins.footer = footer
 
     def get_page_margins(self):
         """Return a copy of the page margins dict."""
-        return dict(self._page_margins)
+        return dict(self._properties.page_margins)
 
     def set_fit_to_pages(self, width=1, height=1):
         """Set fit-to-pages: width and height are page counts (0 = auto)."""
-        self._page_setup['fit_to_width']  = width
-        self._page_setup['fit_to_height'] = height
-        self._page_setup['fit_to_page']   = True
+        page_setup = self._properties.page_setup
+        page_setup.fit_to_width = width
+        page_setup.fit_to_height = height
 
     def set_print_scale(self, scale):
         """Set print scale percentage (10–400)."""
-        if scale < 10 or scale > 400:
-            raise ValueError(f"Print scale must be between 10 and 400, got {scale}.")
-        self._page_setup['scale'] = scale
+        self._properties.page_setup.scale = scale
 
     @property
     def auto_filter(self):
@@ -503,9 +487,10 @@ class Worksheet:
         Gets the page setup settings for this worksheet.
         
         Returns:
-            dict: Dictionary containing page setup settings.
+            PageSetup: The shared page setup model. Dictionary-style access is
+                supported for backward compatibility.
         """
-        return self._page_setup
+        return self._properties.page_setup
     
     @property
     def page_margins(self):
@@ -513,9 +498,10 @@ class Worksheet:
         Gets the page margins for this worksheet.
 
         Returns:
-            dict: Dictionary containing page margin settings (in inches).
+            PageMargins: The shared page margins model. Dictionary-style access
+                is supported for backward compatibility.
         """
-        return self._page_margins
+        return self._properties.page_margins
 
     @property
     def properties(self):
@@ -601,6 +587,56 @@ class Worksheet:
     def ClearPrintArea(self):
         return self.clear_print_area()
 
+    @property
+    def print_title_rows(self):
+        """Rows repeated at the top of each printed page, such as ``1:3``."""
+        return self.page_setup.print_title_rows
+
+    @print_title_rows.setter
+    def print_title_rows(self, value):
+        self.page_setup.print_title_rows = value
+
+    @property
+    def print_title_columns(self):
+        """Columns repeated at the left of each printed page, such as ``A:C``."""
+        return self.page_setup.print_title_columns
+
+    @print_title_columns.setter
+    def print_title_columns(self, value):
+        self.page_setup.print_title_columns = value
+
+    def set_print_titles(self, rows=None, columns=None):
+        """Set repeated print-title rows and columns; ``None`` clears an axis."""
+        self.print_title_rows = rows
+        self.print_title_columns = columns
+
+    def clear_print_titles(self):
+        """Clear repeated rows and columns."""
+        self.set_print_titles()
+
+    def get_print_title_ranges(self):
+        """Return 1-based inclusive row/column tuples for pagination."""
+        rows = self._parse_print_title_indexes(self.print_title_rows, rows=True)
+        columns = self._parse_print_title_indexes(
+            self.print_title_columns, rows=False
+        )
+        return rows, columns
+
+    def SetPrintTitles(self, rows=None, columns=None):
+        return self.set_print_titles(rows, columns)
+
+    def ClearPrintTitles(self):
+        return self.clear_print_titles()
+
+    @staticmethod
+    def _parse_print_title_indexes(value, rows):
+        if value is None:
+            return None
+        start, end = value.split(':', 1)
+        if rows:
+            return int(start), int(end)
+        return Cells.column_index_from_string(start), Cells.column_index_from_string(end)
+
     def _normalize_print_area(self, print_area):
         """
         Validates and normalizes print area string into uppercase A1 notation.
@@ -625,6 +661,125 @@ class Worksheet:
         if not parts:
             raise ValueError("print_area must contain at least one valid range")
         return ','.join(parts)
+
+    def get_content_bounds(self, include_drawings=True):
+        """Return bounds of live renderable content, or None for an empty sheet."""
+        return WorksheetBoundsResolver.get_content_bounds(
+            self, include_drawings=include_drawings
+        )
+
+    def get_printable_bounds(self, include_drawings=True):
+        """Return printable areas, preserving discontiguous explicit print areas."""
+        return WorksheetBoundsResolver.get_printable_bounds(
+            self, include_drawings=include_drawings
+        )
+
+    def get_render_bounds(self, include_drawings=True):
+        """Return the final printable envelope consumed by layout and pagination."""
+        return WorksheetBoundsResolver.get_render_bounds(
+            self, include_drawings=include_drawings
+        )
+
+    def get_effective_style(
+        self,
+        cell_ref=None,
+        row=None,
+        column=None,
+        include_conditional_formats=False,
+    ):
+        """
+        Returns the resolved visual style for a cell.
+
+        Args:
+            cell_ref (str, optional): Cell reference in A1 notation.
+            row (int, optional): 1-based row number when cell_ref is omitted.
+            column (int or str, optional): 1-based column number or column
+                letter when cell_ref is omitted.
+            include_conditional_formats (bool): Whether matching conditional
+                formatting differential styles are applied over the base style.
+        """
+        if cell_ref is not None:
+            row, column = self.cells.coordinate_from_string(str(cell_ref).upper())
+        return StyleResolver.resolve_cell_style(
+            self,
+            row,
+            column,
+            include_conditional_formats=include_conditional_formats,
+        )
+
+    def measure_text(self, text, style=None, width_points=None, wrap_text=False):
+        """
+        Measure text using the workbook's shared font strategy when available.
+        """
+        font = getattr(style, "font", None)
+        if font is None:
+            workbook = getattr(self, "_workbook", None)
+            if workbook is not None and getattr(workbook, "_styles", None):
+                font = workbook._styles[0].font
+            else:
+                font = Cell().style.font
+
+        workbook = getattr(self, "_workbook", None)
+        measurer = workbook.text_measurer if workbook is not None else TextMeasurer()
+        return measurer.measure_text(
+            text,
+            font,
+            width_points=width_points,
+            wrap_text=wrap_text,
+        )
+
+    def measure_cell_text(self, cell_ref, width_points=None):
+        """
+        Measure a cell's display text using its resolved effective style.
+        """
+        row, column = self.cells.coordinate_from_string(str(cell_ref).upper())
+        cell = self.cells[cell_ref]
+        style = self.get_effective_style(row=row, column=column)
+        text = cell.get_display_text()
+        return self.measure_text(
+            text,
+            style=style,
+            width_points=width_points,
+            wrap_text=style.alignment.wrap_text,
+        )
+
+    def get_effective_default_row_height(self):
+        """
+        Return the workbook-font-derived default row height unless the sheet marks
+        the stored default row height as custom/authoritative.
+        """
+        workbook = getattr(self, "_workbook", None)
+        if workbook is None:
+            return float(self.properties.format.default_row_height)
+        font = workbook._styles[0].font
+        resolution = workbook.font_strategy.resolve(font)
+        if (
+            self.properties.format.dy_descent is not None
+            and resolution.resolved_family.lower() == 'calibri'
+            and not self.properties.format.custom_height
+        ):
+            measured = workbook.text_measurer.measure_text('0', font)
+            return round(measured.line_height_points, 2)
+        return workbook.text_measurer.derive_default_row_height(
+            font,
+            stored_height=self.properties.format.default_row_height,
+            is_custom=self.properties.format.custom_height,
+        )
+
+    def calculate_row_heights(self, bounds=None):
+        """
+        Return layout-time row heights in points without changing the worksheet.
+
+        The returned mapping uses 1-based row numbers. Explicit custom heights
+        are preserved; cached non-custom heights are recomputed from display text.
+        """
+        return RowHeightCalculator.calculate(self, bounds=bounds)
+
+    def _calculate_row_heights_for_auto_fit(self, bounds, rows):
+        """Internal helper that allows auto-fit to replace explicit row heights."""
+        return RowHeightCalculator.calculate(
+            self, bounds=bounds, ignore_custom_rows=rows
+        )
 
     # Methods
     
@@ -748,11 +903,17 @@ class Worksheet:
         new_ws = Worksheet(name if name else f"{self._name} (copy)")
         # Copy cells
         for ref, cell in self._cells._cells.items():
-            new_ws._cells._cells[ref] = Cell(cell.value, cell.formula)
+            new_ws._cells._cells[ref] = Cell(cell.value, cell.formula, worksheet=new_ws)
+            new_ws._cells._cells[ref]._rich_text_runs = tuple(cell.rich_text_runs)
             if cell.style:
                 new_ws._cells._cells[ref].style = cell.style.copy()
         new_ws._merged_cells = list(self._merged_cells)
+        new_ws._row_heights = dict(self._row_heights)
+        new_ws._custom_height_rows = set(self._custom_height_rows)
+        new_ws._loaded_height_rows = set(self._loaded_height_rows)
         new_ws._print_area = self._print_area
+        new_ws.page_setup.print_title_rows = self.print_title_rows
+        new_ws.page_setup.print_title_columns = self.print_title_columns
         new_ws._horizontal_page_breaks = set(self._horizontal_page_breaks)
         new_ws._vertical_page_breaks = set(self._vertical_page_breaks)
         new_ws._charts = self._charts.copy(new_ws)

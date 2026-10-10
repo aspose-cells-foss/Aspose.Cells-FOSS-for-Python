@@ -1,160 +1,182 @@
-# Aspose.Cells FOSS
+# Aspose.Cells FOSS for Python
 
-A Python library for creating, reading, and modifying Excel files (.xlsx format) without requiring Microsoft Excel.
-
-[![PyPI version](https://badge.fury.io/py/aspose-cells-foss.svg)](https://badge.fury.io/py/aspose-cells-foss)
+[![PyPI version](https://img.shields.io/pypi/v/aspose-cells-foss.svg)](https://pypi.org/project/aspose-cells-foss/)
 [![Python](https://img.shields.io/pypi/pyversions/aspose-cells-foss.svg)](https://pypi.org/project/aspose-cells-foss/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](License/LICENSE.txt)
+
+Aspose.Cells FOSS for Python is a pure-Python library for creating, reading, modifying,
+and exporting Excel `.xlsx` workbooks without requiring Microsoft Excel.
 
 ## Features
 
-- **Create & Edit Excel Files**: Create new workbooks or modify existing .xlsx files
-- **Cell Operations**: Read/write cell values and formulas
-- **Styling**: Apply fonts, colors, borders, number formats, and alignment
-- **Multiple Worksheets**: Add, remove, rename, and manage worksheets
-- **Charts**: Create and modify charts (line, bar, pie, scatter, combo, waterfall, treemap, and more)
-- **Tables**: Add and manage ListObject tables with styles and auto-filters
-- **Shapes & TextBoxes**: Add shapes, text boxes, and pictures with hyperlinks
-- **Data Validation**: Add dropdown lists, number ranges, and custom validation rules
-- **Comments**: Add and manage cell comments with author and rich text
-- **Hyperlinks**: Create links to URLs, emails, files, and internal references
-- **Auto-Filters**: Apply filtering to data ranges
-- **Conditional Formatting**: Apply rules-based formatting
-- **CSV / JSON / Markdown Export**: Save workbooks in multiple text formats
-- **Encryption**: Password-protect Excel files with AES encryption
-- **Workbook & Worksheet Protection**: Protect workbook structure and individual sheets
+- Create, load, edit, and save `.xlsx` workbooks
+- Read and write cell values and formulas using A1 references
+- Apply fonts, fills, borders, alignment, and number formats
+- Manage worksheets, merged cells, hyperlinks, page setup, and page breaks
+- Create and preserve charts, pictures, shapes, tables, and sparklines
+- Add data validation, conditional formatting, auto-filters, and comments
+- Configure workbook, worksheet, and cell protection
+- Read and write password-encrypted `.xlsx` files
+- Import CSV and export CSV, TSV, JSON, Markdown, and PDF
+- Preserve unsupported workbook parts where possible during load/save round trips
 
 ## Installation
+
+Install the package from PyPI:
 
 ```bash
 pip install aspose-cells-foss
 ```
 
-## Quick Start
+The package requires Python 3.7 or later. Its core runtime dependencies are
+`pycryptodome>=3.15.0` and `olefile>=0.46`.
 
-### Create a new Excel file
+### PDF support
 
-```python
-from aspose.cells_foss import Workbook
+PDF export uses `skia-python`, which is not currently installed by the core package.
+Install the compatible renderer for your Python version:
 
-# Create a new workbook
-workbook = Workbook()
+```bash
+# Python 3.8+
+pip install "skia-python>=144.0.post2,<145"
 
-# Get the first worksheet
-worksheet = workbook.worksheets[0]
-
-# Set cell values
-worksheet.cells["A1"].value = "Hello"
-worksheet.cells["B1"].value = "World"
-worksheet.cells["A2"].value = 42
-worksheet.cells["B2"].value = 3.14
-
-# Save the workbook
-workbook.save("output.xlsx")
+# Python 3.7
+pip install "skia-python==87.4"
 ```
 
-### Read an existing Excel file
+## Quick start
 
-```python
-from aspose.cells_foss import Workbook
-
-# Open an existing workbook
-workbook = Workbook("input.xlsx")
-
-# Access a worksheet
-worksheet = workbook.worksheets[0]
-
-# Read cell values
-value = worksheet.cells["A1"].value
-print(f"Cell A1 contains: {value}")
-```
-
-### Apply styling
+### Create a workbook
 
 ```python
 from aspose.cells_foss import Workbook
 
 workbook = Workbook()
 worksheet = workbook.worksheets[0]
-cell = worksheet.cells["A1"]
 
-cell.value = "Styled Text"
+worksheet.cells["A1"].value = "Product"
+worksheet.cells["B1"].value = "Revenue"
+worksheet.cells["A2"].value = "Widget"
+worksheet.cells["B2"].value = 1250.50
 
-# Get and modify the cell style
+workbook.save("report.xlsx")
+```
+
+### Read a workbook
+
+```python
+from aspose.cells_foss import Workbook
+
+workbook = Workbook("report.xlsx")
+worksheet = workbook.worksheets[0]
+
+print(worksheet.cells["B2"].value)
+```
+
+### Apply cell styling
+
+```python
+from aspose.cells_foss import Workbook
+
+workbook = Workbook()
+cell = workbook.worksheets[0].cells["A1"]
+cell.value = "Quarterly Report"
+
 style = cell.get_style()
 style.font.bold = True
-style.font.color = "#FF0000"  # Red
+style.font.color = "#FF0000"
 style.font.size = 14
 cell.apply_style(style)
 
 workbook.save("styled.xlsx")
 ```
 
-### Add data validation (dropdown list)
+### Add a validation list
 
 ```python
-from aspose.cells_foss import Workbook, DataValidationType
+from aspose.cells_foss import DataValidationType, Workbook
 
 workbook = Workbook()
 worksheet = workbook.worksheets[0]
 
-# Add a dropdown list validation to A1:A10
 validation = worksheet.data_validations.add("A1:A10")
 validation.type = DataValidationType.LIST
-validation.formula1 = '"Option1,Option2,Option3"'
+validation.formula1 = '"Yes,No"'
 
 workbook.save("validation.xlsx")
 ```
 
-### Export to CSV
+### Export a workbook
+
+The output format is inferred from the file extension:
 
 ```python
 from aspose.cells_foss import Workbook
 
-workbook = Workbook("input.xlsx")
-workbook.save_as_csv("output.csv")
+workbook = Workbook("report.xlsx")
+workbook.save("report.csv")
+workbook.save("report.json")
+workbook.save("report.md")
+workbook.save("report.pdf")  # Requires skia-python
 ```
 
-### Password protection
+### Encrypt a workbook
 
 ```python
 from aspose.cells_foss import Workbook
 
 workbook = Workbook()
-worksheet = workbook.worksheets[0]
-worksheet.cells["A1"].value = "Confidential Data"
+workbook.worksheets[0].cells["A1"].value = "Confidential"
+workbook.save("protected.xlsx", password="example-password")
 
-# Save with password protection
-workbook.save("protected.xlsx", password="mypassword")
-
-# Open a password-protected file
-workbook2 = Workbook("protected.xlsx", password="mypassword")
+loaded = Workbook("protected.xlsx", password="example-password")
+print(loaded.worksheets[0].cells["A1"].value)
 ```
 
-## Requirements
+## Supported formats
 
-- Python 3.7 or higher
-- pycryptodome >= 3.15.0
-- olefile >= 0.46
+| Format | Load | Save |
+|---|:---:|:---:|
+| XLSX | Yes | Yes |
+| Encrypted XLSX | Yes | Yes |
+| CSV | Yes | Yes |
+| TSV | No | Yes |
+| JSON | No | Yes |
+| Markdown | No | Yes |
+| PDF | No | Yes |
 
-## Documentation
+CSV import is available through `Workbook.load_csv()` or `load_csv_workbook()`.
 
-For more examples and detailed API documentation, see the [examples](https://github.com/aspose-cells-foss/aspose-cells-python/tree/main/examples) directory.
+## Scope
 
-## Contributing
+- Formula expressions and cached results are preserved, but this project is not a full Excel
+  calculation engine.
+- Native workbook loading and saving targets the Open XML `.xlsx` format. Other spreadsheet
+  formats such as `.xls`, `.ods`, and `.xlsb` are not supported.
+- Some advanced Excel features are preserved as source package parts rather than exposed as
+  editable Python objects.
+- PDF output depends on locally available fonts and the optional `skia-python` renderer.
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+## Examples and API
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- Browse the executable [examples](examples) for feature-specific workflows.
+- See the package's public exports in
+  [`aspose/cells_foss/__init__.py`](aspose/cells_foss/__init__.py).
+- Read the current [release notes](RELEASE_NOTES.md).
+
+## Development
+
+Install the development dependencies and collect or run the examples:
+
+```bash
+pip install -e ".[dev]"
+python -m pytest examples -v
+```
+
+Generated workbooks are written below `examples/outputfiles/` and are not intended for source
+control.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/aspose-cells-foss/aspose-cells-python/blob/main/License/license.txt) file for details.
-
-## Support
-
-- **Issues**: [GitHub Issues](https://github.com/aspose-cells-foss/aspose-cells-python/issues)
+This project is licensed under the [MIT License](License/LICENSE.txt). Third-party notices are
+available in [License/ThirdPartyNotices.txt](License/ThirdPartyNotices.txt).

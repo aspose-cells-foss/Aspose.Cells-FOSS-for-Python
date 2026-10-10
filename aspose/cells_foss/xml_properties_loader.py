@@ -447,6 +447,7 @@ class WorksheetPropertiesXMLLoader:
             return
 
         page_setup = properties.page_setup
+        page_setup._source_present = True
         if elem.get('paperSize'):
             page_setup._paper_size = int(elem.get('paperSize'))
         if elem.get('scale'):

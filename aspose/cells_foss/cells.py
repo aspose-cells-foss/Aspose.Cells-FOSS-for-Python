@@ -48,6 +48,14 @@ class Cells:
                 column = self.column_index_from_string(column)
             return self.coordinate_to_string(int(row), int(column))
         return key
+
+    def _attach_cell(self, cell, reference=None):
+        """Attach worksheet context to a cell managed by this collection."""
+        if cell is not None:
+            cell._worksheet = self._worksheet
+            if reference is not None:
+                cell._reference = reference
+        return cell
     
     # Cell access methods
     
@@ -67,8 +75,8 @@ class Cells:
         """
         key = self._normalize_key(key)
         if key not in self._cells:
-            self._cells[key] = Cell()
-        return self._cells[key]
+            self._cells[key] = self._attach_cell(Cell(), key)
+        return self._attach_cell(self._cells[key], key)
     
     def __setitem__(self, key, value):
         """
@@ -85,10 +93,11 @@ class Cells:
         """
         key = self._normalize_key(key)
         if key not in self._cells:
-            self._cells[key] = Cell()
+            self._cells[key] = self._attach_cell(Cell(), key)
         if isinstance(value, Cell):
-            self._cells[key] = value
+            self._cells[key] = self._attach_cell(value, key)
         else:
+            self._attach_cell(self._cells[key], key)
             self._cells[key].value = value
     
     def cell(self, row=None, column=None):
@@ -467,7 +476,58 @@ class Cells:
             raise ValueError("row must be >= 0")
         if height is None or height <= 0:
             raise ValueError("height must be > 0")
-        self._worksheet._row_heights[int(row) + 1] = float(height)
+        row = int(row) + 1
+        self._worksheet._row_heights[row] = float(height)
+        self._worksheet._custom_height_rows.add(row)
+        self._worksheet._loaded_height_rows.discard(row)
+
+    def auto_fit_row(self, row):
+        """Auto-fit one 0-based row from its current display text and styles."""
+        self._require_worksheet()
+        if row is None or row < 0:
+            raise ValueError("row must be >= 0")
+        row_number = int(row) + 1
+        bounds = self._worksheet.get_content_bounds(include_drawings=False)
+        if bounds is None or row_number < bounds.min_row or row_number > bounds.max_row:
+            height = self._worksheet.get_effective_default_row_height()
+        else:
+            heights = self._worksheet._calculate_row_heights_for_auto_fit(
+                bounds, {row_number}
+            )
+            height = heights.get(
+                row_number, self._worksheet.get_effective_default_row_height()
+            )
+        self._worksheet._row_heights[row_number] = float(height)
+        self._worksheet._custom_height_rows.discard(row_number)
+        self._worksheet._loaded_height_rows.discard(row_number)
+        return float(height)
+
+    def auto_fit_rows(self, start_row=0, end_row=None):
+        """Auto-fit an inclusive range of 0-based rows and return their heights."""
+        self._require_worksheet()
+        if start_row is None or start_row < 0:
+            raise ValueError("start_row must be >= 0")
+        bounds = self._worksheet.get_content_bounds(include_drawings=False)
+        if end_row is None:
+            end_row = (bounds.max_row - 1) if bounds is not None else int(start_row)
+        if end_row < start_row:
+            raise ValueError("end_row must be >= start_row")
+        rows = set(range(int(start_row) + 1, int(end_row) + 2))
+        if bounds is None:
+            default = self._worksheet.get_effective_default_row_height()
+            heights = {row: default for row in rows}
+        else:
+            heights = self._worksheet._calculate_row_heights_for_auto_fit(bounds, rows)
+        result = {}
+        for row in sorted(rows):
+            height = heights.get(
+                row, self._worksheet.get_effective_default_row_height()
+            )
+            self._worksheet._row_heights[row] = float(height)
+            self._worksheet._custom_height_rows.discard(row)
+            self._worksheet._loaded_height_rows.discard(row)
+            result[row - 1] = float(height)
+        return result
 
     def get_row_height(self, row):
         """
@@ -637,6 +697,12 @@ class Cells:
 
     def GetRowHeight(self, row):
         return self.get_row_height(row)
+
+    def AutoFitRow(self, row):
+        return self.auto_fit_row(row)
+
+    def AutoFitRows(self, start_row=0, end_row=None):
+        return self.auto_fit_rows(start_row, end_row)
 
     def SetColumnWidth(self, column, width):
         return self.set_column_width(column, width)

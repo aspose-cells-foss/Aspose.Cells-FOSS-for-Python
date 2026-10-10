@@ -7,6 +7,31 @@ Includes sheet views, sheet format, sheet protection, page setup, page margins, 
 ECMA-376 Sections: 18.3.1
 """
 
+from collections.abc import Mapping
+import re
+
+
+class _PropertyMapping(Mapping):
+    """Expose property models through the legacy dictionary-style API."""
+
+    _mapping_keys = ()
+
+    def __getitem__(self, key):
+        if key not in self._mapping_keys:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __setitem__(self, key, value):
+        if key not in self._mapping_keys:
+            raise KeyError(key)
+        setattr(self, key, value)
+
+    def __iter__(self):
+        return iter(self._mapping_keys)
+
+    def __len__(self):
+        return len(self._mapping_keys)
+
 
 class SheetView:
     """
@@ -691,7 +716,7 @@ class SheetProtection:
         return self._sheet
 
 
-class PageSetup:
+class PageSetup(_PropertyMapping):
     """
     Represents page setup settings.
 
@@ -703,7 +728,17 @@ class PageSetup:
         >>> ws.properties.page_setup.scale = 80
     """
 
+    _mapping_keys = (
+        'paper_size', 'scale', 'first_page_number', 'fit_to_width',
+        'fit_to_height', 'page_order', 'orientation',
+        'use_printer_defaults', 'black_and_white', 'draft',
+        'cell_comments', 'errors', 'horizontal_dpi', 'vertical_dpi',
+        'copies', 'use_first_page_number', 'fit_to_page',
+        'print_title_rows', 'print_title_columns',
+    )
+
     def __init__(self):
+        self._source_present = False
         self._paper_size = 1  # Letter
         self._scale = 100
         self._first_page_number = None
@@ -719,6 +754,8 @@ class PageSetup:
         self._horizontal_dpi = None
         self._vertical_dpi = None
         self._copies = 1
+        self._print_title_rows = None
+        self._print_title_columns = None
 
     @property
     def paper_size(self):
@@ -893,8 +930,59 @@ class PageSetup:
             self._fit_to_width = None
             self._fit_to_height = None
 
+    @property
+    def print_title_rows(self):
+        """Rows repeated at the top of each printed page, such as ``1:3``."""
+        return self._print_title_rows
 
-class PageMargins:
+    @print_title_rows.setter
+    def print_title_rows(self, value):
+        self._print_title_rows = self._normalize_print_title(value, rows=True)
+
+    @property
+    def print_title_columns(self):
+        """Columns repeated at the left of each printed page, such as ``A:C``."""
+        return self._print_title_columns
+
+    @print_title_columns.setter
+    def print_title_columns(self, value):
+        self._print_title_columns = self._normalize_print_title(value, rows=False)
+
+    @staticmethod
+    def _normalize_print_title(value, rows):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        if not isinstance(value, str):
+            raise ValueError("print title range must be a string or None")
+
+        value = value.strip().upper().replace('$', '')
+        pattern = r"^(\d+)(?::(\d+))?$" if rows else r"^([A-Z]+)(?::([A-Z]+))?$"
+        match = re.fullmatch(pattern, value)
+        if not match:
+            kind = "row" if rows else "column"
+            raise ValueError(f"invalid print title {kind} range: {value!r}")
+
+        start, end = match.group(1), match.group(2) or match.group(1)
+        if rows:
+            start_index, end_index = int(start), int(end)
+            if start_index < 1 or end_index > 1048576 or start_index > end_index:
+                raise ValueError("print title rows must be within 1:1048576 and ascending")
+        else:
+            start_index = PageSetup._column_index(start)
+            end_index = PageSetup._column_index(end)
+            if end_index > 16384 or start_index > end_index:
+                raise ValueError("print title columns must be within A:XFD and ascending")
+        return f"{start}:{end}"
+
+    @staticmethod
+    def _column_index(label):
+        index = 0
+        for char in label:
+            index = index * 26 + ord(char) - ord('A') + 1
+        return index
+
+
+class PageMargins(_PropertyMapping):
     """
     Represents page margins.
 
@@ -904,6 +992,8 @@ class PageMargins:
         >>> ws.properties.page_margins.left = 0.7
         >>> ws.properties.page_margins.top = 0.75
     """
+
+    _mapping_keys = ('left', 'right', 'top', 'bottom', 'header', 'footer')
 
     def __init__(self):
         self._left = 0.7

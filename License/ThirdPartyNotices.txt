@@ -1,0 +1,119 @@
+THIRD-PARTY OPEN SOURCE NOTICES
+
+This document lists the third-party open source software and data used by
+Aspose.Cells for Python. Dependency constraints come from pyproject.toml.
+Installed versions may differ unless an exact version is shown.
+
+Aspose.Cells for Python is licensed separately under License/LICENSE.txt.
+
+
+RUNTIME DEPENDENCIES
+
+1. PyCryptodome
+   Project constraint: Version 3.15.0 or later
+   License: Public Domain and BSD 2-Clause
+   License source:
+   https://github.com/Legrandin/pycryptodome/blob/master/LICENSE.rst
+
+   PyCryptodome contains code dedicated to the public domain and direct
+   contributions released under the BSD 2-Clause license.
+
+2. olefile
+   Project constraint: Version 0.46 or later
+   License: BSD 2-Clause-style license and PIL license
+   License source:
+   https://github.com/decalage2/olefile/blob/master/LICENSE.txt
+
+   olefile is derived in part from the Python Imaging Library. Its upstream
+   license file contains both the olefile and PIL notices.
+
+3. skia-python
+   Project constraint for Python earlier than 3.8: Version 87.4
+   Project constraint for Python 3.8 or later: Version 144.0.post2 or later,
+   but earlier than version 145
+   License: BSD 3-Clause
+   License source:
+   https://github.com/skia-python/skia-python/blob/main/LICENSE
+
+
+TRANSITIVE RUNTIME DEPENDENCIES
+
+The following components are required by skia-python. Their concrete versions
+are selected by the Python package installer.
+
+1. Skia Graphics Library
+   Usage: Native rendering engine bundled with skia-python
+   License: BSD 3-Clause
+   License source:
+   https://skia.googlesource.com/skia/+/main/LICENSE
+
+2. NumPy
+   Version constraint: Not pinned by skia-python
+   Licenses: BSD 3-Clause, 0BSD, MIT, Zlib, and CC0 1.0 components
+   License source:
+   https://github.com/numpy/numpy/blob/main/LICENSE.txt
+
+   NumPy distributions may include additional third-party binary components
+   and notices. When redistributing NumPy or a bundled application, include
+   the complete license files shipped with the exact NumPy distribution.
+
+3. pybind11
+   Version constraint: Version 2.6 or later
+   License: BSD 3-Clause
+   License source:
+   https://github.com/pybind/pybind11/blob/master/LICENSE
+
+
+BUILD AND DEVELOPMENT DEPENDENCIES
+
+These tools are used to build or test the project. They are not required by
+the library at runtime unless included by a downstream distributor.
+
+1. setuptools
+   Project constraint: Version 61.0 or later
+   License: MIT
+   License source:
+   https://github.com/pypa/setuptools/blob/main/LICENSE
+
+2. wheel
+   Project constraint: No version is pinned
+   License: MIT
+   License source:
+   https://github.com/pypa/wheel/blob/main/LICENSE.txt
+
+3. pytest
+   Project constraint: Version 7.0.0 or later
+   License: MIT
+   License source:
+   https://github.com/pytest-dev/pytest/blob/main/LICENSE
+
+4. pytest-cov
+   Project constraint: Version 4.0.0 or later
+   License: MIT
+   License source:
+   https://github.com/pytest-dev/pytest-cov/blob/master/LICENSE
+
+
+BUNDLED OPEN DATA
+
+1. Natural Earth Admin 0 Countries, 1:110m
+   File: aspose/cells_foss/ne_110m_admin_0_countries.geojson
+   License and terms: Public Domain
+   Terms source:
+   https://www.naturalearthdata.com/about/terms-of-use/
+
+   Natural Earth states that its raster and vector map data are in the public
+   domain. This GeoJSON asset is used by the map-chart PDF renderer.
+
+
+REDISTRIBUTION
+
+The dependencies listed above are normally installed by the Python package
+installer and are not vendored in this repository, except for the Natural
+Earth GeoJSON asset. If a binary application, container, offline installer,
+or other combined distribution includes these dependencies, retain all
+copyright notices and include the complete license and notice files shipped
+with the exact dependency versions being redistributed.
+
+This inventory was reviewed on 2026-10-09. It is an engineering inventory,
+not legal advice. Update it whenever dependencies or bundled assets change.

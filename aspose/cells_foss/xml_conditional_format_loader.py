@@ -8,6 +8,10 @@ ECMA-376 Section 18.3.1.18 defines the conditionalFormatting element structure.
 """
 
 
+_X14_NS = 'http://schemas.microsoft.com/office/spreadsheetml/2009/9/main'
+_XM_NS = 'http://schemas.microsoft.com/office/excel/2006/main'
+
+
 class ConditionalFormatXMLLoader:
     """
     Handles loading conditional formatting data from XML format for .xlsx files.
@@ -63,6 +67,9 @@ class ConditionalFormatXMLLoader:
                 # Parse rule attributes
                 rule_type = rule_elem.get('type')
                 cf._type = rule_type
+                extension_id = rule_elem.find(f'.//{{{_X14_NS}}}id')
+                if extension_id is not None and extension_id.text:
+                    cf._data_bar_extension_id = extension_id.text.strip()
 
                 # Parse priority
                 priority = rule_elem.get('priority')
@@ -153,6 +160,8 @@ class ConditionalFormatXMLLoader:
                 # Add to worksheet's conditional formats
                 worksheet.conditional_formats._formats.append(cf)
 
+        self._apply_extended_data_bars(worksheet, worksheet_root)
+
         # Load dxf formatting and apply to conditional formats
         self._apply_dxf_to_conditional_formats(worksheet)
 
@@ -161,6 +170,9 @@ class ConditionalFormatXMLLoader:
         # Get cfvo elements to determine if 2-color or 3-color
         cfvo_elems = color_scale_elem.findall('main:cfvo', namespaces=self.ns)
         cf._color_scale_type = '3-color' if len(cfvo_elems) >= 3 else '2-color'
+        cf._color_scale_thresholds = [
+            dict(cfvo_elem.attrib) for cfvo_elem in cfvo_elems
+        ]
 
         # Get color elements
         color_elems = color_scale_elem.findall('main:color', namespaces=self.ns)
@@ -174,16 +186,155 @@ class ConditionalFormatXMLLoader:
 
     def _load_data_bar(self, cf, data_bar_elem):
         """Loads dataBar element data into conditional format."""
+        cf._data_bar_thresholds = [
+            dict(cfvo_elem.attrib)
+            for cfvo_elem in data_bar_elem.findall(
+                'main:cfvo', namespaces=self.ns
+            )
+        ]
+        try:
+            cf._data_bar_min_length = int(
+                data_bar_elem.get('minLength', '10')
+            )
+        except (TypeError, ValueError):
+            cf._data_bar_min_length = 10
+        try:
+            cf._data_bar_max_length = int(
+                data_bar_elem.get('maxLength', '90')
+            )
+        except (TypeError, ValueError):
+            cf._data_bar_max_length = 90
+        cf._data_bar_show_value = data_bar_elem.get(
+            'showValue', '1'
+        ) not in ('0', 'false', 'False')
+        # The legacy dataBar schema used by this loader renders a gradient.
+        # Solid fills and other extended properties live in the x14 extension.
+        cf._data_bar_gradient = True
+
         # Get color element
         color_elem = data_bar_elem.find('main:color', namespaces=self.ns)
         if color_elem is not None:
             cf._bar_color = color_elem.get('rgb')
+
+    def _apply_extended_data_bars(self, worksheet, worksheet_root):
+        """Merges x14 data-bar properties into their legacy cfRule."""
+        data_bars = [
+            rule for rule in worksheet.conditional_formats
+            if getattr(rule, '_type', None) == 'dataBar'
+        ]
+        by_id = {
+            self._normalize_extension_id(
+                getattr(rule, '_data_bar_extension_id', None)
+            ): rule
+            for rule in data_bars
+            if getattr(rule, '_data_bar_extension_id', None)
+        }
+
+        for container in worksheet_root.findall(
+            f'.//{{{_X14_NS}}}conditionalFormatting'
+        ):
+            sqref_elem = container.find(f'{{{_XM_NS}}}sqref')
+            sqref = (
+                sqref_elem.text.strip()
+                if sqref_elem is not None and sqref_elem.text
+                else None
+            )
+            for extended_rule in container.findall(
+                f'{{{_X14_NS}}}cfRule'
+            ):
+                if extended_rule.get('type') != 'dataBar':
+                    continue
+                extension_id = self._normalize_extension_id(
+                    extended_rule.get('id')
+                )
+                target = by_id.get(extension_id)
+                if target is None and sqref is not None:
+                    target = next((
+                        rule for rule in data_bars
+                        if str(getattr(rule, 'range', '')).strip() == sqref
+                    ), None)
+                if target is None:
+                    continue
+                data_bar = extended_rule.find(f'{{{_X14_NS}}}dataBar')
+                if data_bar is not None:
+                    self._load_extended_data_bar(target, data_bar)
+
+    def _load_extended_data_bar(self, cf, data_bar_elem):
+        cf._data_bar_min_length = self._integer_attribute(
+            data_bar_elem, 'minLength', cf._data_bar_min_length
+        )
+        cf._data_bar_max_length = self._integer_attribute(
+            data_bar_elem, 'maxLength', cf._data_bar_max_length
+        )
+        cf._data_bar_show_value = self._boolean_attribute(
+            data_bar_elem, 'showValue', cf._data_bar_show_value
+        )
+        cf._data_bar_gradient = self._boolean_attribute(
+            data_bar_elem, 'gradient', cf._data_bar_gradient
+        )
+        cf._show_border = self._boolean_attribute(
+            data_bar_elem, 'border', cf._show_border
+        )
+
+        direction = data_bar_elem.get('direction')
+        if direction == 'leftToRight':
+            cf._direction = 'left-to-right'
+        elif direction == 'rightToLeft':
+            cf._direction = 'right-to-left'
+        cf._data_bar_axis_position = data_bar_elem.get('axisPosition')
+
+        thresholds = []
+        for threshold_elem in data_bar_elem.findall(
+            f'{{{_X14_NS}}}cfvo'
+        ):
+            threshold = {'type': threshold_elem.get('type', '')}
+            formula = threshold_elem.find(f'{{{_XM_NS}}}f')
+            if formula is not None and formula.text is not None:
+                threshold['val'] = formula.text
+            thresholds.append(threshold)
+        if len(thresholds) == 2:
+            cf._data_bar_thresholds = thresholds
+
+        color_properties = (
+            ('negativeFillColor', '_negative_color'),
+            ('borderColor', '_data_bar_border_color'),
+            ('negativeBorderColor', '_data_bar_negative_border_color'),
+            ('axisColor', '_data_bar_axis_color'),
+        )
+        for element_name, property_name in color_properties:
+            color = data_bar_elem.find(f'{{{_X14_NS}}}{element_name}')
+            if color is not None and color.get('rgb'):
+                setattr(cf, property_name, color.get('rgb'))
+
+    @staticmethod
+    def _normalize_extension_id(value):
+        return str(value or '').strip().upper()
+
+    @staticmethod
+    def _integer_attribute(element, name, default):
+        try:
+            return int(element.get(name, default))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _boolean_attribute(element, name, default):
+        value = element.get(name)
+        if value is None:
+            return default
+        return value not in ('0', 'false', 'False')
 
     def _load_icon_set(self, cf, icon_set_elem):
         """Loads iconSet element data into conditional format."""
         cf._icon_set_type = icon_set_elem.get('iconSet', '3TrafficLights1')
         cf._reverse_icons = icon_set_elem.get('reverse') == '1'
         cf._show_icon_only = icon_set_elem.get('showValue') == '0'
+        cf._icon_set_thresholds = [
+            dict(threshold.attrib)
+            for threshold in icon_set_elem.findall(
+                'main:cfvo', namespaces=self.ns
+            )
+        ]
 
     def _apply_dxf_to_conditional_formats(self, worksheet):
         """Applies differential formatting (dxf) to conditional formats."""
@@ -210,6 +361,10 @@ class ConditionalFormatXMLLoader:
 
         if 'fill' in dxf_data:
             fill = dxf_data['fill']
+            foreground_color = fill.get(
+                'fg_color', fill.get('bg_color', 'FFFFFFFF')
+            )
+            background_color = fill.get('bg_color', foreground_color)
             cf._fill.pattern_type = fill.get('pattern_type', 'solid')
-            cf._fill.foreground_color = fill.get('fg_color', 'FFFFFFFF')
-            cf._fill.background_color = fill.get('bg_color', 'FFFFFFFF')
+            cf._fill.foreground_color = foreground_color
+            cf._fill.background_color = background_color

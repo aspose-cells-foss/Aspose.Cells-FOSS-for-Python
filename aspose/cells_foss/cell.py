@@ -11,6 +11,8 @@ Compatible with Aspose.Cells for .NET API structure.
 import sys
 from datetime import datetime, date, time
 from .style import Style
+from .style_resolver import StyleResolver
+from .value_formatter import ValueFormatter, DisplayValueOptions
 
 
 class Cell:
@@ -30,7 +32,7 @@ class Cell:
         >>> cell.set_comment("This is a note", "Author")
     """
     
-    def __init__(self, value=None, formula=None):
+    def __init__(self, value=None, formula=None, worksheet=None):
         """
         Initializes a new instance of the Cell class.
         
@@ -49,6 +51,8 @@ class Cell:
         self._style = Style()
         self._comment = None
         self._style_index = 0  # Internal use for saving
+        self._worksheet = worksheet
+        self._rich_text_runs = ()
         
         # Debug logging
         if '--debug' in sys.argv:
@@ -80,6 +84,12 @@ class Cell:
             val: The value to set. Can be None, int, float, str, bool, datetime, date, or time.
         """
         self._value = val
+        self._rich_text_runs = ()
+
+    @property
+    def rich_text_runs(self):
+        """Returns the formatted runs loaded for this cell's rich text."""
+        return self._rich_text_runs
     
     @property
     def formula(self):
@@ -208,6 +218,7 @@ class Cell:
             >>> cell.clear_value()
         """
         self._value = None
+        self._rich_text_runs = ()
     
     def clear_formula(self):
         """
@@ -227,6 +238,7 @@ class Cell:
         """
         self._value = None
         self._formula = None
+        self._rich_text_runs = ()
     
     # Comment methods
     
@@ -448,6 +460,68 @@ class Cell:
             >>> cell.put_value(42)
         """
         self._value = value
+        self._rich_text_runs = ()
+
+    def get_display_text(self, workbook=None, worksheet=None, options=None):
+        """
+        Returns the cell's visible display text using Excel-like formatting rules.
+
+        Args:
+            workbook: Workbook context used for formula evaluation when needed.
+            worksheet: Worksheet context used for formula evaluation. If omitted,
+                the cell's attached worksheet is used when available.
+            options (DisplayValueOptions, optional): Formatting options.
+
+        Returns:
+            str: The formatted display text.
+        """
+        if options is None:
+            options = DisplayValueOptions()
+        if worksheet is None:
+            worksheet = self._worksheet
+        if workbook is None and worksheet is not None:
+            workbook = getattr(worksheet, '_workbook', None)
+        return ValueFormatter.format_cell(
+            self,
+            workbook=workbook,
+            worksheet=worksheet,
+            options=options,
+        )
+
+    def get_effective_style(self, workbook=None, worksheet=None, include_conditional_formats=False):
+        """
+        Returns the effective visual style for this cell.
+
+        If the cell is attached to a worksheet, workbook defaults and column styles
+        are included in the resolved result. Detached cells fall back to their local
+        style object only.
+        """
+        if worksheet is None:
+            worksheet = self._worksheet
+        if workbook is None and worksheet is not None:
+            workbook = getattr(worksheet, "_workbook", None)
+
+        if worksheet is not None:
+            reference = getattr(self, "_reference", None)
+            if reference:
+                row, column = worksheet.cells.coordinate_from_string(reference)
+                return StyleResolver.resolve_cell_style(
+                    worksheet,
+                    row,
+                    column,
+                    include_conditional_formats=include_conditional_formats,
+                )
+            for candidate_ref, candidate_cell in worksheet.cells.get_all_cells().items():
+                if candidate_cell is self:
+                    row, column = worksheet.cells.coordinate_from_string(candidate_ref)
+                    return StyleResolver.resolve_cell_style(
+                        worksheet,
+                        row,
+                        column,
+                        include_conditional_formats=include_conditional_formats,
+                    )
+
+        return StyleResolver._copy_style(self.style)
 
     # String representation
     

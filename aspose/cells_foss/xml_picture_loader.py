@@ -80,7 +80,7 @@ class PictureXmlLoader:
         anchors.extend(drawing_root.findall('xdr:twoCellAnchor', namespaces=self._xdr_ns))
         anchors.extend(drawing_root.findall('xdr:oneCellAnchor', namespaces=self._xdr_ns))
         for anchor in anchors:
-            pics = anchor.findall('.//xdr:pic', namespaces=self._xdr_ns)
+            pics = list(self._pictures_with_group_transforms(anchor))
             if not pics:
                 continue
             from_col = get_anchor_int(anchor, 'xdr:from/xdr:col', default=0)
@@ -95,7 +95,7 @@ class PictureXmlLoader:
             # Read editAs attribute from anchor element (e.g. "oneCell", "absolute")
             edit_as = anchor.get('editAs')
 
-            for pic_elem in pics:
+            for pic_elem, group_transform in pics:
                 blip = pic_elem.find('xdr:blipFill/a:blip', namespaces=self._xdr_ns)
                 if blip is None:
                     continue
@@ -166,6 +166,77 @@ class PictureXmlLoader:
                 if sp_pr is not None and len(sp_pr) > 0:
                     inner_parts = [_elem_to_xml_str(child) for child in sp_pr]
                     pic._source_spPr_xml = ''.join(inner_parts)
+                    transform = sp_pr.find('a:xfrm', namespaces=self._xdr_ns)
+                    if transform is not None:
+                        offset = transform.find('a:off', namespaces=self._xdr_ns)
+                        extent = transform.find('a:ext', namespaces=self._xdr_ns)
+                        if offset is not None:
+                            pic._transform_x = int(offset.get('x', 0))
+                            pic._transform_y = int(offset.get('y', 0))
+                        if extent is not None:
+                            pic._transform_width = int(extent.get('cx', 0))
+                            pic._transform_height = int(extent.get('cy', 0))
+                        if group_transform is not None:
+                            sx, sy, tx, ty = group_transform
+                            pic._transform_x = round(
+                                sx * pic._transform_x + tx
+                            )
+                            pic._transform_y = round(
+                                sy * pic._transform_y + ty
+                            )
+                            pic._transform_width = round(
+                                sx * pic._transform_width
+                            )
+                            pic._transform_height = round(
+                                sy * pic._transform_height
+                            )
+                            pic._transform_is_group_absolute = True
+
+    def _pictures_with_group_transforms(self, anchor):
+        identity = (1.0, 1.0, 0.0, 0.0)
+
+        def walk(element, parent_transform, grouped):
+            local_name = element.tag.rsplit('}', 1)[-1]
+            transform = parent_transform
+            in_group = grouped
+            if local_name == 'grpSp':
+                in_group = True
+                group = element.find('xdr:grpSpPr/a:xfrm', self._xdr_ns)
+                if group is not None:
+                    offset = group.find('a:off', self._xdr_ns)
+                    extent = group.find('a:ext', self._xdr_ns)
+                    child_offset = group.find('a:chOff', self._xdr_ns)
+                    child_extent = group.find('a:chExt', self._xdr_ns)
+                    if all(item is not None for item in (
+                        offset, extent, child_offset, child_extent
+                    )):
+                        child_width = float(child_extent.get('cx', 0))
+                        child_height = float(child_extent.get('cy', 0))
+                        if child_width and child_height:
+                            local_sx = float(extent.get('cx', 0)) / child_width
+                            local_sy = float(extent.get('cy', 0)) / child_height
+                            local_tx = (
+                                float(offset.get('x', 0))
+                                - float(child_offset.get('x', 0)) * local_sx
+                            )
+                            local_ty = (
+                                float(offset.get('y', 0))
+                                - float(child_offset.get('y', 0)) * local_sy
+                            )
+                            parent_sx, parent_sy, parent_tx, parent_ty = transform
+                            transform = (
+                                parent_sx * local_sx,
+                                parent_sy * local_sy,
+                                parent_sx * local_tx + parent_tx,
+                                parent_sy * local_ty + parent_ty,
+                            )
+            if local_name == 'pic':
+                yield element, transform if in_group else None
+                return
+            for child in element:
+                yield from walk(child, transform, in_group)
+
+        yield from walk(anchor, identity, False)
 
     def resolve_content_type(self, part_path, content_type_overrides, content_type_defaults):
         normalized = f'/{part_path.lstrip("/")}'

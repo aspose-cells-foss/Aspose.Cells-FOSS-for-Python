@@ -25,7 +25,11 @@ class Font:
         >>> style.font.color = "FFFF0000"  # Red color
     """
     
-    def __init__(self, name='Calibri', size=11, color='FF000000', bold=False, italic=False, underline=False, strikethrough=False):
+    def __init__(
+        self, name='Calibri', size=11, color='FF000000', bold=False,
+        italic=False, underline=False, strikethrough=False,
+        underline_type=None, vertical_alignment='baseline',
+    ):
         """
         Initializes a new instance of the Font class.
         
@@ -37,6 +41,11 @@ class Font:
             italic (bool, optional): Whether text is italic. Defaults to False.
             underline (bool, optional): Whether text is underlined. Defaults to False.
             strikethrough (bool, optional): Whether text has strikethrough. Defaults to False.
+            underline_type (str, optional): Excel underline variant. Supported
+                values are 'none', 'single', 'double', 'singleAccounting', and
+                'doubleAccounting'.
+            vertical_alignment (str, optional): Font baseline alignment:
+                'baseline', 'superscript', or 'subscript'.
             
         Examples:
             >>> font = Font()
@@ -49,6 +58,12 @@ class Font:
         self.italic = italic
         self.underline = underline
         self.strikethrough = strikethrough
+        self.underline_type = (
+            underline_type
+            if underline_type is not None
+            else ('single' if underline else 'none')
+        )
+        self.vertical_alignment = vertical_alignment
 
 class Fill:
     """
@@ -158,7 +173,10 @@ class Border:
         >>> style.borders.top.color = 'FFFF0000'  # Red border
     """
     
-    def __init__(self, line_style='none', color='FF000000', weight=1):
+    def __init__(
+        self, line_style='none', color='FF000000', weight=1,
+        automatic_color=False,
+    ):
         """
         Initializes a new instance of Border class.
         
@@ -169,6 +187,8 @@ class Border:
                                       'slantDashDot'. Defaults to 'none'.
             color (str, optional): Border color in AARRGGBB hex format. Defaults to 'FF000000' (black).
             weight (int, optional): Border weight/thickness. Defaults to 1.
+            automatic_color (bool, optional): Whether OOXML selected the
+                automatic border color. Defaults to False.
             
         Examples:
             >>> border = Border()
@@ -177,6 +197,7 @@ class Border:
         self.line_style = line_style
         self.color = color
         self.weight = weight
+        self.automatic_color = automatic_color
 
 class Borders:
     """

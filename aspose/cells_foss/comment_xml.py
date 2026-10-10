@@ -377,7 +377,7 @@ class CommentXMLReader:
                     # Create cell if it doesn't exist (comments can exist on empty cells)
                     if cell_ref not in worksheet.cells._cells:
                         from .cell import Cell
-                        worksheet.cells._cells[cell_ref] = Cell(None, None)
+                        worksheet.cells._cells[cell_ref] = Cell(None, None, worksheet=worksheet)
 
                     # Set comment on the cell
                     cell = worksheet.cells._cells[cell_ref]
