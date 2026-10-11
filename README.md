@@ -3,9 +3,10 @@
 [![PyPI version](https://img.shields.io/pypi/v/aspose-cells-foss.svg)](https://pypi.org/project/aspose-cells-foss/)
 [![Python](https://img.shields.io/pypi/pyversions/aspose-cells-foss.svg)](https://pypi.org/project/aspose-cells-foss/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](License/LICENSE.txt)
+[![Contributors](https://img.shields.io/github/contributors/aspose-cells-foss/Aspose.Cells-FOSS-for-Python.svg)](https://github.com/aspose-cells-foss/Aspose.Cells-FOSS-for-Python/graphs/contributors)
 
-Aspose.Cells FOSS for Python is a pure-Python library for creating, reading, modifying,
-and exporting Excel `.xlsx` workbooks without requiring Microsoft Excel.
+Aspose.Cells FOSS for Python is a free, open-source, pure-Python library for creating, reading,
+modifying, and exporting Excel `.xlsx` workbooks without requiring Microsoft Excel.
 
 ## Features
 
@@ -163,6 +164,8 @@ CSV import is available through `Workbook.load_csv()` or `load_csv_workbook()`.
 - See the package's public exports in
   [`aspose/cells_foss/__init__.py`](aspose/cells_foss/__init__.py).
 - Read the current [release notes](RELEASE_NOTES.md).
+- Review development conventions in [AGENTS.md](AGENTS.md).
+- Found a bug or have a feature request? [Open an issue](https://github.com/aspose-cells-foss/Aspose.Cells-FOSS-for-Python/issues).
 
 ## Development
 
