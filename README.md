@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](License/LICENSE.txt)
 [![Contributors](https://img.shields.io/github/contributors/aspose-cells-foss/Aspose.Cells-FOSS-for-Python.svg)](https://github.com/aspose-cells-foss/Aspose.Cells-FOSS-for-Python/graphs/contributors)
 
+[![Aspose.Cells FOSS for Python](https://products.aspose.org/media/cells/python/banner-readme.png)](https://products.aspose.org/cells/python/)
+
 Aspose.Cells FOSS for Python is a free, open-source, pure-Python library for creating, reading,
 modifying, and exporting Excel `.xlsx` workbooks without requiring Microsoft Excel.
 
