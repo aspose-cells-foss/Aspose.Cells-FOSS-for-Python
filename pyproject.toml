@@ -46,7 +46,7 @@ Issues = "https://github.com/aspose-cells-foss/aspose-cells-python/issues"
 packages = ["aspose", "aspose.cells_foss", "examples"]
 
 [tool.setuptools.package-data]
-"aspose.cells_foss" = ["*.py"]
+"aspose.cells_foss" = ["*.py", "*.geojson"]
 examples = ["*.py"]
 
 [tool.pytest.ini_options]
