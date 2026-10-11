@@ -18,17 +18,13 @@ conflicts with the repository, use the following sources in order:
 pip install aspose-cells-foss
 ```
 
-Python 3.7 or later is required. Core package metadata declares `pycryptodome>=3.15.0` and
+Python 3.10 or later is required. Core package metadata declares `pycryptodome>=3.15.0` and
 `olefile>=0.46`.
 
 PDF rendering additionally requires `skia-python`:
 
 ```bash
-# Python 3.8+
 pip install "skia-python>=144.0.post2,<145"
-
-# Python 3.7
-pip install "skia-python==87.4"
 ```
 
 ## Rules for Generated Code

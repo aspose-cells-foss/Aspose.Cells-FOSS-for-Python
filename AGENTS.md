@@ -118,13 +118,13 @@ examples/                  # Executable example tests for library features
 
 ## Tech Stack
 
-- **Language**: Python 3.7+
+- **Language**: Python 3.10+
 - **Workbook format**: `.xlsx` / ECMA-376 Open XML
 - **XML**: `xml.etree.ElementTree`
 - **Archives**: `zipfile`
 - **Encryption**: `pycryptodome`
 - **Encrypted container support**: `olefile`
-- **PDF rendering**: `skia-python` (version selected by Python version in `requirements.txt`)
+- **PDF rendering**: `skia-python>=144.0.post2,<145`
 - **Optional font metrics**: Pillow when available; deterministic fallback otherwise
 - **Testing**: `pytest`, `unittest`
 

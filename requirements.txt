@@ -3,5 +3,4 @@ pycryptodome>=3.15.0
 olefile>=0.46
 
 # PDF rendering
-skia-python==87.4; python_version < "3.8"
-skia-python>=144.0.post2,<145; python_version >= "3.8"
+skia-python>=144.0.post2,<145

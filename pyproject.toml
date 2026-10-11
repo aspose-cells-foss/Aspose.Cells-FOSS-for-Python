@@ -7,7 +7,7 @@ name = "aspose-cells-foss"
 version = "26.10.0"
 description = "A Python library for creating, reading, and modifying Excel files (.xlsx format)"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 license = "MIT"
 license-files = ["License/LICENSE.txt"]
 authors = [
@@ -18,9 +18,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

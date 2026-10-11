@@ -29,20 +29,16 @@ Install the package from PyPI:
 pip install aspose-cells-foss
 ```
 
-The package requires Python 3.7 or later. Its core runtime dependencies are
+The package requires Python 3.10 or later. Its core runtime dependencies are
 `pycryptodome>=3.15.0` and `olefile>=0.46`.
 
 ### PDF support
 
 PDF export uses `skia-python`, which is not currently installed by the core package.
-Install the compatible renderer for your Python version:
+Install the renderer separately:
 
 ```bash
-# Python 3.8+
 pip install "skia-python>=144.0.post2,<145"
-
-# Python 3.7
-pip install "skia-python==87.4"
 ```
 
 ## Quick start
